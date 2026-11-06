@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/*
+  LeadLeak design tokens.
+  Every color here becomes a Tailwind class, e.g. --color-brand -> bg-brand / text-brand.
+*/
+@theme {
+  /* Brand */
+  --color-brand: #f26b1d;
+  --color-brand-hover: #d95a10;
+  --color-brand-soft: #fff1e8;
+
+  /* Top bar */
+  --color-topbar: #1b1f24;
+  --color-topbar-text: #e6e8eb;
+  --color-topbar-muted: #8b939c;
+
+  /* Page + panels */
+  --color-page: #f3f4f6;
+  --color-panel: #ffffff;
+  --color-line: #e2e5e9;
+  --color-ink: #1f2328;
+  --color-muted: #5f6873;
+
+  /* Audit status colors */
+  --color-error: #d92d20;
+  --color-error-soft: #fdecea;
+  --color-warning: #e08a00;
+  --color-warning-soft: #fff4e0;
+  --color-notice: #2f6fdb;
+  --color-notice-soft: #e8f0fd;
+  --color-passed: #16a34a;
+  --color-passed-soft: #e7f6ec;
+
+  /* Font (variable set by next/font in layout.tsx) */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--color-page);
+  color: var(--color-ink);
+}
