@@ -1,14 +1,13 @@
 import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import type { CheckResult } from "./types";
+import { clean, sameSite } from "./utils";
 
 // Each check is a pure function: (parsed HTML) -> CheckResult. No network.
 
 function result(r: Omit<CheckResult, "category">): CheckResult {
   return { category: "on-page", ...r };
 }
-
-const clean = (s: string | undefined) => (s ?? "").replace(/\s+/g, " ").trim();
 
 export function checkTitle($: CheerioAPI): CheckResult {
   const title = clean($("head title").first().text() || $("title").first().text());
@@ -150,11 +149,6 @@ export function checkWordCount($: CheerioAPI): CheckResult {
     return result({ ...base, status: "warning", message: `Only ${words} words on the page. Google needs more text to understand your services and the cities you work in. Aim for 300+.` });
   }
   return result({ ...base, status: "passed", message: `${words} words on the page.` });
-}
-
-function sameSite(a: string, b: string): boolean {
-  const strip = (h: string) => h.toLowerCase().replace(/^www\./, "");
-  return strip(a) === strip(b);
 }
 
 export function countLinks($: CheerioAPI, pageUrl: string): { internal: number; external: number } {

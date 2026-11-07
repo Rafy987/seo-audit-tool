@@ -1,5 +1,6 @@
 import { fetchPage, FetchPageError } from "@/lib/fetchPage";
 import { runOnPageChecks } from "@/lib/checks/onPage";
+import { runLeadCaptureChecks } from "@/lib/checks/leadCapture";
 import type { CheckResult } from "@/lib/checks/types";
 
 // Shape of the JSON this route returns (the form imports this type).
@@ -27,7 +28,10 @@ export async function POST(request: Request) {
 
   try {
     const page = await fetchPage(url);
-    const checks = runOnPageChecks(page.html, page.finalUrl);
+    const checks = [
+      ...runLeadCaptureChecks(page.html),
+      ...runOnPageChecks(page.html, page.finalUrl),
+    ];
     const info: AuditBasicInfo = {
       requestedUrl: page.requestedUrl,
       finalUrl: page.finalUrl,
