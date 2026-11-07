@@ -15,10 +15,16 @@ export const CONTRACTOR_ONLY = new Set([
 
 const NA_MESSAGE = "Not applicable: this check is for contractor and home-service websites.";
 
-// On a non-contractor site, contractor-only checks become "na" (grey, not scored).
+// On a non-contractor site:
+// - contractor-only checks become "na" (grey, not scored)
+// - a missing LocalBusiness schema is only a Notice (useful for a physical shop, not critical)
 export function applySiteType(checks: CheckResult[], siteType: SiteType): CheckResult[] {
   if (siteType === "contractor") return checks;
-  return checks.map((c) =>
-    CONTRACTOR_ONLY.has(c.id) ? { ...c, status: "na", message: NA_MESSAGE, value: undefined } : c,
-  );
+  return checks.map((c): CheckResult => {
+    if (CONTRACTOR_ONLY.has(c.id)) return { ...c, status: "na", message: NA_MESSAGE, value: undefined };
+    if (c.id === "local-schema" && c.status === "error") {
+      return { ...c, status: "notice", message: "No LocalBusiness schema found. If you have a physical shop or showroom, adding it helps you show up in local Google results (name, address, phone, opening hours)." };
+    }
+    return c;
+  });
 }

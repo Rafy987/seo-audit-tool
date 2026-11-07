@@ -49,6 +49,13 @@ describe("applySiteType", () => {
     expect(r[0].message).toContain("Not applicable");
     expect(r[0].value).toBeUndefined();
   });
+  it("turns a missing LocalBusiness schema from Error into Notice on an online store", () => {
+    const r = applySiteType([{ ...check("local-schema"), category: "local-seo" }], "ecommerce");
+    expect(r[0].status).toBe("notice");
+    expect(r[0].message).toContain("physical shop");
+    // ...but keeps it as an Error for contractors
+    expect(applySiteType([check("local-schema")], "contractor")[0].status).toBe("error");
+  });
   it("covers the checks the user listed (quote button, license, insured, service area, map, BBB)", () => {
     for (const id of ["cta-above-fold", "license", "insured", "service-city-pages", "map-service-area", "badges"]) {
       expect(CONTRACTOR_ONLY.has(id)).toBe(true);
