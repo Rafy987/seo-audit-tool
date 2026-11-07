@@ -21,8 +21,8 @@ const checks = [
 
 export default function Home() {
   return (
-    <div className="mx-auto max-w-3xl px-4 py-12 sm:py-16">
-      <h1 className="text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+    <div className="mx-auto max-w-5xl px-4 py-10 sm:py-14">
+      <h1 className="max-w-2xl text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
         Find out why your website isn&apos;t getting more calls
       </h1>
       <p className="mt-2 max-w-xl text-muted">
@@ -30,23 +30,25 @@ export default function Home() {
         phone calls and quote requests, and shows what to fix first.
       </p>
 
-      <section className="mt-6 rounded-md border border-line bg-panel p-4 sm:p-5">
-        <AuditForm />
-      </section>
-
-      <section className="mt-8">
-        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
-          What the audit checks
-        </h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {checks.map((c) => (
-            <div key={c.title} className="rounded-md border border-line bg-panel p-4">
-              <h3 className="font-semibold text-ink">{c.title}</h3>
-              <p className="mt-1 text-xs leading-relaxed text-muted">{c.text}</p>
+      <div className="mt-6">
+        {/* This server-rendered section is passed into the client form as children,
+            and is hidden once results are shown. */}
+        <AuditForm>
+          <section className="mt-8">
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-muted">
+              What the audit checks
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {checks.map((c) => (
+                <div key={c.title} className="rounded-md border border-line bg-panel p-4">
+                  <h3 className="font-semibold text-ink">{c.title}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted">{c.text}</p>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </section>
+          </section>
+        </AuditForm>
+      </div>
     </div>
   );
 }
