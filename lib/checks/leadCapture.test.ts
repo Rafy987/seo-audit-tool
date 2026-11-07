@@ -15,7 +15,17 @@ describe("checkClickToCall", () => {
   it("passes with a tel: link in the header", () => {
     const r = checkClickToCall($('<header><a href="tel:+12145551234">(214) 555-1234</a></header>'));
     expect(r.status).toBe("passed");
-    expect(r.value).toBe("+12145551234");
+    expect(r.value).toBe("(214) 555-1234");
+  });
+  it("shows every number when one tel: link holds two (Pakistan format)", () => {
+    const r = checkClickToCall($('<header><a href="tel:0310-5521893, 0336-5033448">Call</a></header>'));
+    expect(r.status).toBe("passed");
+    expect(r.value).toBe("0310-5521893, 0336-5033448");
+  });
+  it("finds plain-text international numbers that aren't clickable", () => {
+    const r = checkClickToCall($("<header><p>Call us: +44 20 7946 0958</p></header>"));
+    expect(r.status).toBe("error");
+    expect(r.value).toBe("+44 20 7946 0958");
   });
   it("errors when the number is plain text, not a link", () => {
     const r = checkClickToCall($("<header><span>Call (214) 555-1234</span></header>"));

@@ -4,6 +4,8 @@ import { runOnPageChecks } from "@/lib/checks/onPage";
 import { runLeadCaptureChecks } from "@/lib/checks/leadCapture";
 import { runLocalSeoChecks } from "@/lib/checks/localSeo";
 import { runTrustChecks } from "@/lib/checks/trust";
+import { applySiteType } from "@/lib/checks/applicability";
+import { detectSiteType, type SiteType } from "@/lib/siteType";
 import type { CheckResult } from "@/lib/checks/types";
 
 // Homepage (≤10 s) + mini crawl (≤25 s). Tells Vercel this route may run up to 60 s.
@@ -20,6 +22,8 @@ export type AuditBasicInfo = {
   title: string | null;
   pagesCrawled: number;
   sitemapFound: boolean;
+  siteType: SiteType;
+  siteTypeSignals: string[];
   checks: CheckResult[];
 };
 
@@ -38,12 +42,17 @@ export async function POST(request: Request) {
     const page = await fetchPage(url);
     const crawl = await crawlSite({ url: page.finalUrl, html: page.html });
 
-    const checks = [
-      ...runLeadCaptureChecks(page.html),
-      ...runLocalSeoChecks(crawl),
-      ...runTrustChecks(crawl),
-      ...runOnPageChecks(page.html, page.finalUrl),
-    ];
+    const site = detectSiteType(crawl.pages);
+
+    const checks = applySiteType(
+      [
+        ...runLeadCaptureChecks(page.html),
+        ...runLocalSeoChecks(crawl),
+        ...runTrustChecks(crawl),
+        ...runOnPageChecks(page.html, page.finalUrl),
+      ],
+      site.type,
+    );
     const info: AuditBasicInfo = {
       requestedUrl: page.requestedUrl,
       finalUrl: page.finalUrl,
@@ -54,6 +63,8 @@ export async function POST(request: Request) {
       title: checks.find((c) => c.id === "title")?.value ?? null,
       pagesCrawled: crawl.pages.length,
       sitemapFound: crawl.sitemapFound,
+      siteType: site.type,
+      siteTypeSignals: site.signals,
       checks,
     };
     return Response.json(info);

@@ -74,7 +74,8 @@ describe("classifyPages", () => {
     `${BASE}/contact-me`,
   ];
   it("finds service and city pages and skips blog/hub/home", () => {
-    const { service, city } = classifyPages(urls);
+    // "-in-los-gatos" counts because Los Gatos is a city the site names.
+    const { service, city } = classifyPages(urls, ["Los Gatos"]);
     // "/flooring-in-los-gatos" is both a service page and a city page.
     expect(service.sort()).toEqual(["/built-in-cabinets", "/flooring-in-los-gatos", "/hardwood-flooring", "/tile-installation", "/vinyl-plank-san-jose-ca"].sort());
     expect(city.sort()).toEqual(["/flooring-in-los-gatos", "/service-areas/campbell", "/vinyl-plank-san-jose-ca"].sort());
@@ -144,6 +145,42 @@ describe("city pages from site city names", () => {
   });
 });
 
+describe("stricter city page detection (non-contractor sites)", () => {
+  const shop = "https://motorcycleshop.pk";
+  it("does not count product pages with 'price-in-pakistan' as city pages", () => {
+    const urls = [
+      `${shop}/yamaha/23-yamaha-ybr-125-red-blue-black-price-in-pakistan-rating-reviews-and-pictures.html`,
+      `${shop}/honda/50-honda-cd-70-price-in-pakistan`,
+      `${shop}/products/helmet-in-lahore`,
+    ];
+    expect(classifyPages(urls, [], [], { usStates: false }).city).toEqual([]);
+  });
+  it("never treats a country name as a city", () => {
+    const $ = cheerio.load("<p>Service area includes Pakistan, Lahore and Islamabad.</p>");
+    const cities = extractCityNames([$], null);
+    expect(cities.sort()).toEqual(["Islamabad", "Lahore"]);
+    expect(classifyPages([`${shop}/bikes-in-pakistan`, `${shop}/bike-repair-in-lahore`], cities, [], { usStates: false }).city).toEqual([
+      "/bike-repair-in-lahore",
+    ]);
+  });
+  it("skips state-code rules when the site isn't in the US", () => {
+    expect(classifyPages([`${shop}/kawasaki-ninja-ca`], [], [], { usStates: false }).city).toEqual([]);
+    expect(classifyPages([`${shop}/kawasaki-ninja-ca`], [], [], { usStates: true }).city).toEqual(["/kawasaki-ninja-ca"]);
+  });
+  it("skips pages that have Product schema", () => {
+    expect(classifyPages([`${shop}/oakland-helmet`], ["Oakland"], [], { exclude: new Set(["/oakland-helmet"]) }).city).toEqual([]);
+  });
+  it("runLocalSeoChecks: a Pakistani shop gets 0 city pages", () => {
+    const home = "<title>Motorcycle Shop</title><p>Contact 0310-5521893</p>";
+    const r = runLocalSeoChecks({
+      pages: [{ url: `${shop}/`, html: home }],
+      urls: Array.from({ length: 62 }, (_, i) => `${shop}/bikes/${i}-model-${i}-price-in-pakistan.html`),
+      sitemapFound: true,
+    });
+    expect(r.find((c) => c.id === "service-city-pages")?.value).toBe("0 service, 0 city pages");
+  });
+});
+
 describe("checkServicePages", () => {
   const input = (urls: string[], sitemapFound = true) => ({ pages: [], urls, sitemapFound });
   it("errors with no service or city pages and mentions missing sitemap", () => {
@@ -172,13 +209,37 @@ describe("checkNapConsistency", () => {
     ], fullBusiness);
     expect(r.status).toBe("passed");
   });
-  it("warns with two different numbers and says where", () => {
+  it("warns when a page shows a different number instead of the main one, and says where", () => {
     const r = run([
       { url: `${BASE}/`, html: "<p>408-555-0123</p>" },
+      { url: `${BASE}/about`, html: "<p>408-555-0123</p>" },
       { url: `${BASE}/contact`, html: "<p>408-555-9999</p>" },
     ]);
     expect(r.status).toBe("warning");
+    expect(r.message).toContain("Your main number is (408) 555-0123");
     expect(r.message).toContain("(408) 555-9999 (/contact)");
+  });
+  it("uses the same parser as lead capture: two Pakistani numbers in one tel: link", () => {
+    const html = '<a href="tel:0310-5521893, 0336-5033448">Call</a>';
+    const r = run([
+      { url: `${BASE}/`, html },
+      { url: `${BASE}/contact`, html },
+    ]);
+    expect(r.status).toBe("passed");
+    expect(r.value).toBe("0310-5521893 on 2 pages; 0336-5033448 on 2 pages");
+    expect(r.message).toContain("Other numbers listed alongside it: 0336-5033448");
+  });
+  it("treats +92 and 0 formats as the same number", () => {
+    const r = run([
+      { url: `${BASE}/`, html: '<a href="tel:+923105521893">Call</a>' },
+      { url: `${BASE}/contact`, html: "<p>Phone: 0310-5521893</p>" },
+    ]);
+    expect(r.status).toBe("passed");
+  });
+  it("supports UK numbers", () => {
+    const r = run([{ url: `${BASE}/`, html: "<p>Call 020 7946 0958</p>" }]);
+    expect(r.status).toBe("passed");
+    expect(r.value).toBe("020 7946 0958 on 1 page");
   });
   it("warns when the schema phone doesn't match the site", () => {
     const r = run([{ url: `${BASE}/`, html: "<p>408-555-7777 123 Main St</p>" }], fullBusiness);

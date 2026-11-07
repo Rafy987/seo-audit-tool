@@ -1,7 +1,8 @@
 import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import type { CheckResult } from "./types";
-import { clean, PHONE_RE } from "./utils";
+import { clean } from "./utils";
+import { findPhonesInText, parseTelHref } from "../phone";
 
 // Lead capture checks: can a homeowner call or ask for a quote easily?
 // All pure functions on parsed HTML. No network.
@@ -21,7 +22,7 @@ export const FOLD_CHARS = 500;
 const SKIP_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
 
 // Strong "ask for a quote" wording.
-const CTA_RE =
+export const CTA_RE =
   /free\s+(estimate|quote|inspection|consultation|measure|in-home)|get\s+(a\s+|your\s+|my\s+)?(free\s+)?(quote|estimate|pricing)|request\s+(a\s+|an\s+)?(free\s+)?(quote|estimate|service|appointment|consultation)|schedule\s+(a\s+|an\s+|your\s+)?(free\s+)?(estimate|consultation|appointment|service|inspection|now)|book\s+(now|online|a\s+|an\s+|your\s+)|call\s+(now|today|us)/i;
 
 type Clickable = { text: string; href: string; inHeader: boolean; offset: number };
@@ -65,19 +66,20 @@ export function checkClickToCall($: CheerioAPI): CheckResult {
   const base = { id: "click-to-call", title: "Click-to-call phone link", weight: 10 };
 
   if (tels.length === 0) {
-    const phone = visibleText($).match(PHONE_RE)?.[0];
+    const phone = findPhonesInText(visibleText($))[0]?.display;
     if (phone) {
       return result({ ...base, status: "error", value: phone, message: `Your phone number (${phone}) isn't clickable on mobile. Most homeowners search on their phone and want to tap to call. Wrap it in a tel: link.` });
     }
     return result({ ...base, status: "error", message: "No phone number found on the page. Many homeowners would rather call than fill out a form. Add a tap-to-call number in the header." });
   }
 
-  const number = tels[0].href.replace(/^tel:/i, "");
+  // All numbers in a link: "tel:0310-5521893, 0336-5033448" holds two.
+  const numbers = (c: Clickable) => parseTelHref(c.href).map((p) => p.display).join(", ") || c.href.replace(/^tel:/i, "");
   const top = tels.find(aboveFold);
   if (!top) {
-    return result({ ...base, status: "warning", value: number, message: "There's a click-to-call link, but only further down the page. Put it in the header so it's visible right away on mobile." });
+    return result({ ...base, status: "warning", value: numbers(tels[0]), message: "There's a click-to-call link, but only further down the page. Put it in the header so it's visible right away on mobile." });
   }
-  return result({ ...base, status: "passed", value: top.href.replace(/^tel:/i, ""), message: "Tap-to-call phone link is visible at the top of the page." });
+  return result({ ...base, status: "passed", value: numbers(top), message: "Tap-to-call phone link is visible at the top of the page." });
 }
 
 // Fields a visitor actually fills in.

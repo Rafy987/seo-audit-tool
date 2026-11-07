@@ -11,8 +11,26 @@ const STATUS: Record<CheckStatus, { label: string; badge: string; bar: string }>
   warning: { label: "Warning", badge: "bg-warning-soft text-warning", bar: "bg-warning" },
   notice: { label: "Notice", badge: "bg-notice-soft text-notice", bar: "bg-notice" },
   passed: { label: "Passed", badge: "bg-passed-soft text-passed", bar: "bg-passed" },
+  na: { label: "N/A", badge: "bg-page text-muted", bar: "bg-line" },
 };
-const ORDER: CheckStatus[] = ["error", "warning", "notice", "passed"];
+const ORDER: CheckStatus[] = ["error", "warning", "notice", "passed", "na"];
+
+// Shown when the site doesn't look like a contractor / home-service business.
+function SiteTypeBanner({ info }: { info: AuditBasicInfo }) {
+  if (info.siteType === "contractor") return null;
+  const kind = info.siteType === "ecommerce" ? "an online store" : "a contractor or home-service business";
+  const lead = info.siteType === "ecommerce" ? `This looks like ${kind}` : `This doesn't look like ${kind}`;
+  return (
+    <div role="note" className="mt-4 rounded border border-line bg-page px-3 py-2.5 text-xs text-ink">
+      <p className="font-semibold">LeadLeak is built for contractor and home-service websites; some checks don&apos;t apply.</p>
+      <p className="mt-1 text-muted">
+        {lead}
+        {info.siteTypeSignals.length > 0 ? ` (${info.siteTypeSignals.slice(0, 3).join(", ")})` : ""}. Contractor-only checks are
+        marked N/A and won&apos;t count toward the score.
+      </p>
+    </div>
+  );
+}
 
 const CATEGORIES: { key: CheckCategory; label: string }[] = [
   { key: "lead-capture", label: "Lead capture" },
@@ -32,7 +50,10 @@ function CheckGroups({ checks }: { checks: CheckResult[] }) {
 
 function CheckList({ title, checks }: { title: string; checks: CheckResult[] }) {
   const sorted = [...checks].sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
-  const counts = ORDER.map((s) => [s, checks.filter((c) => c.status === s).length] as const);
+  // Always show the 4 real statuses; show N/A only when there are some.
+  const counts = ORDER.map((s) => [s, checks.filter((c) => c.status === s).length] as const).filter(
+    ([s, n]) => s !== "na" || n > 0,
+  );
 
   return (
     <div className="mt-4 overflow-hidden rounded border border-line">
@@ -155,6 +176,7 @@ export default function AuditForm() {
 
       {result && (
         <>
+          <SiteTypeBanner info={result} />
           <BasicInfo info={result} />
           <CheckGroups checks={result.checks} />
         </>

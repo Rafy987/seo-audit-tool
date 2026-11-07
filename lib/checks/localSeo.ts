@@ -1,7 +1,8 @@
 import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import type { CheckResult } from "./types";
-import { clean, formatPhone, normalizePhone, PHONE_RE_ALL } from "./utils";
+import { clean } from "./utils";
+import { findPhonesInText, parsePhone, parseTelHref, type Phone } from "../phone";
 
 // Local SEO checks across several pages of one site.
 // Pure functions: they get HTML + URL lists, never fetch anything.
@@ -42,7 +43,7 @@ export function extractJsonLd($: CheerioAPI): JsonObject[] {
   return out;
 }
 
-const typesOf = (node: JsonObject): string[] =>
+export const typesOf = (node: JsonObject): string[] =>
   ([] as unknown[])
     .concat(node["@type"])
     .filter((t): t is string => typeof t === "string")
@@ -137,6 +138,9 @@ const STATE_SUFFIX_RE =
 // (so /sign-in, /contact-me, /about-us, /go-to etc. don't count).
 const ONE_WORD_STATE_RE = /^[a-z]{4,}-(ak|az|ar|ca|ct|fl|ga|ia|il|ks|ky|md|mi|mn|ms|mt|nc|nd|nh|nj|nm|nv|ny|ri|sc|sd|tn|tx|ut|va|vt|wa|wi|wv|wy)$/;
 const SKIP_PATH_RE = /^\/(blog|news|articles?|tag|category|author|wp-|feed)(\/|$)|\/\d{4}\/\d{2}\//;
+// Shop / product URLs are never service or city pages, even if they contain a
+// place name ("/yamaha/23-ybr-125-price-in-pakistan.html").
+const PRODUCT_PATH_RE = /\/\d+-[a-z0-9-]+\.html?$|\/(products?|shop|product-category|collections|item|catalog)\//;
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -157,6 +161,9 @@ const NOT_CITY_WORDS = new Set([
   "hardwood", "roofing", "plumbing", "repair", "installation", "company", "inc", "llc", "best", "top",
   "suite", "street", "st", "ave", "road", "blvd", "gallery", "reviews", "welcome",
   "your", "my", "transform", "upgrade", "new", "in", "for", "near", "visit", "local", "trusted", "premier",
+  // Countries / regions are not city pages ("price in Pakistan").
+  "pakistan", "usa", "america", "united", "states", "kingdom", "uk", "england", "britain", "canada", "india",
+  "australia", "uae", "emirates", "world", "worldwide", "nationwide", "online", "international",
 ]);
 // Fine inside a name ("Mountain View", "Castro Valley"), too generic on their own.
 const GENERIC_PLACE_PARTS = new Set(["view", "valley", "park", "city", "beach", "hill", "hills", "creek", "point", "heights", "springs", "lake", "grove", "village"]);
@@ -225,7 +232,13 @@ export function extractCityNames($pages: CheerioAPI[], business: BusinessInfo | 
 
 export type PageTitle = { url: string; title: string };
 
-export function classifyPages(urls: string[], cities: string[] = [], titles: PageTitle[] = []) {
+export type ClassifyOptions = {
+  usStates?: boolean; // use "-ca" / "-tx" state-code URL rules (only for US sites). Default true.
+  exclude?: Set<string>; // paths to skip, e.g. pages with Product schema
+};
+
+export function classifyPages(urls: string[], cities: string[] = [], titles: PageTitle[] = [], opts: ClassifyOptions = {}) {
+  const { usStates = true, exclude = new Set<string>() } = opts;
   const citySlugs = cities.map(slug).filter((s) => s.length >= 4);
   // City name as a whole slug part: "castro-valley" in "castro-valley-flooring", not "oak" in "oakwood".
   const slugMatchers = citySlugs.map((c) => new RegExp(`(^|-)${escapeRe(c)}(-|$)`));
@@ -253,15 +266,15 @@ export function classifyPages(urls: string[], cities: string[] = [], titles: Pag
     } catch {
       continue;
     }
-    if (!path || path === "/" || SKIP_PATH_RE.test(path)) continue;
+    if (!path || path === "/" || SKIP_PATH_RE.test(path) || PRODUCT_PATH_RE.test(path) || exclude.has(path)) continue;
     const last = path.split("/").pop() ?? "";
     const title = titleByPath.get(path) ?? "";
 
+    // "-in-<city>" only counts when <city> is a city the site itself names
+    // (handled by slugMatchers), so "price-in-pakistan" doesn't count.
     const isCity =
       AREA_HUB_RE.test(path) ||
-      /(?<!built)-in-[a-z]{3,}/.test(last) ||
-      STATE_SUFFIX_RE.test(last) ||
-      ONE_WORD_STATE_RE.test(last) ||
+      (usStates && (STATE_SUFFIX_RE.test(last) || ONE_WORD_STATE_RE.test(last))) ||
       slugMatchers.some((re) => re.test(last)) ||
       titleCities.some((c) => new RegExp(`\\b${escapeRe(c)}\\b`, "i").test(title));
     if (isCity) city.add(path);
@@ -270,8 +283,8 @@ export function classifyPages(urls: string[], cities: string[] = [], titles: Pag
   return { service: [...service], city: [...city] };
 }
 
-export function checkServicePages(input: LocalSeoInput, cities: string[], titles: PageTitle[] = []): CheckResult {
-  const { service, city } = classifyPages(input.urls, cities, titles);
+export function checkServicePages(input: LocalSeoInput, cities: string[], titles: PageTitle[] = [], opts: ClassifyOptions = {}): CheckResult {
+  const { service, city } = classifyPages(input.urls, cities, titles, opts);
   const base = { id: "service-city-pages", title: "Service & city pages", weight: 8, value: `${service.length} service, ${city.length} city pages` };
   const noSitemap = input.sitemapFound ? "" : " (We also couldn't find a sitemap.xml, so we only checked links from the homepage.)";
 
@@ -303,16 +316,16 @@ function visibleText($: CheerioAPI): string {
   return clean(body.text());
 }
 
-export function phonesOnPage($: CheerioAPI): Set<string> {
-  const found = new Set<string>();
+// Phone numbers on a page (tel: links + text), keyed so formats don't matter.
+export function phonesOnPage($: CheerioAPI): Map<string, Phone> {
+  const found = new Map<string, Phone>();
+  const add = (p: Phone) => {
+    if (!found.has(p.key)) found.set(p.key, p);
+  };
   $('a[href^="tel:" i]').each((_, a) => {
-    const p = normalizePhone(($(a).attr("href") ?? "").slice(4));
-    if (p) found.add(p);
+    parseTelHref($(a).attr("href") ?? "").forEach(add);
   });
-  for (const m of visibleText($).match(PHONE_RE_ALL) ?? []) {
-    const p = normalizePhone(m);
-    if (p) found.add(p);
-  }
+  findPhonesInText(visibleText($)).forEach(add);
   return found;
 }
 
@@ -327,29 +340,43 @@ const pathOf = (u: string) => {
 export function checkNapConsistency(pages: SitePage[], $pages: CheerioAPI[], business: BusinessInfo | null): CheckResult {
   const base = { id: "nap", title: "Name, address & phone consistency", weight: 6 };
 
-  // phone -> pages it appears on
-  const where = new Map<string, string[]>();
+  // phone key -> { phone, pages it appears on }
+  const where = new Map<string, { phone: Phone; pages: string[] }>();
+  const pagePhones: { path: string; keys: Set<string> }[] = [];
   $pages.forEach(($, i) => {
-    for (const p of phonesOnPage($)) where.set(p, [...(where.get(p) ?? []), pathOf(pages[i].url)]);
+    const path = pathOf(pages[i].url);
+    const found = phonesOnPage($);
+    if (found.size > 0) pagePhones.push({ path, keys: new Set(found.keys()) });
+    for (const [key, phone] of found) {
+      const entry = where.get(key) ?? { phone, pages: [] };
+      entry.pages.push(path);
+      where.set(key, entry);
+    }
   });
 
-  const schemaPhone = business?.telephone ? normalizePhone(business.telephone) : null;
+  const schemaPhone = business?.telephone ? parsePhone(business.telephone) : null;
   if (where.size === 0 && !schemaPhone) {
     return result({ ...base, status: "notice", message: "No phone number found on the pages we checked, so there's nothing to compare." });
   }
 
   const problems: string[] = [];
-  const sorted = [...where.entries()].sort((a, b) => b[1].length - a[1].length);
-  const value = sorted.map(([p, list]) => `${formatPhone(p)} on ${list.length} page${list.length === 1 ? "" : "s"}`).join("; ");
+  const sorted = [...where.values()].sort((a, b) => b.pages.length - a.pages.length);
+  const value = sorted.map((e) => `${e.phone.display} on ${e.pages.length} page${e.pages.length === 1 ? "" : "s"}`).join("; ");
 
-  if (where.size > 1) {
-    const detail = sorted
-      .map(([p, list]) => `${formatPhone(p)} (${list.slice(0, 2).join(", ")}${list.length > 2 ? "…" : ""})`)
+  // The main number is the most used one. A page that shows a phone but NOT the
+  // main number is inconsistent. Extra numbers next to the main one are fine
+  // (e.g. a store listing two lines on every page).
+  const main = sorted[0];
+  const conflicts = main ? pagePhones.filter((p) => !p.keys.has(main.phone.key)) : [];
+  if (main && conflicts.length > 0) {
+    const others = conflicts
+      .slice(0, 3)
+      .map((c) => `${[...c.keys].map((k) => where.get(k)!.phone.display).join(" / ")} (${c.path})`)
       .join(", ");
-    problems.push(`${where.size} different phone numbers appear on the site: ${detail}. Google and customers trust a business more when the same number is used everywhere. (If you have several locations, make sure each page shows the right one.)`);
+    problems.push(`Your main number is ${main.phone.display}, but ${conflicts.length === 1 ? "a page shows" : `${conflicts.length} pages show`} a different number instead: ${others}. Google and customers trust a business more when the same number is used everywhere. (If you have several locations, make sure each page shows the right one.)`);
   }
-  if (schemaPhone && where.size > 0 && !where.has(schemaPhone)) {
-    problems.push(`The phone number in your schema (${formatPhone(schemaPhone)}) doesn't match the one shown on your pages.`);
+  if (schemaPhone && where.size > 0 && !where.has(schemaPhone.key)) {
+    problems.push(`The phone number in your schema (${schemaPhone.display}) doesn't match the one shown on your pages.`);
   }
   if (business?.street) {
     const key = slug(business.street).split("-").slice(0, 2).join(" "); // e.g. "123 main"
@@ -362,8 +389,9 @@ export function checkNapConsistency(pages: SitePage[], $pages: CheerioAPI[], bus
   if (problems.length > 0) {
     return result({ ...base, status: "warning", value, message: problems.join(" ") });
   }
-  const only = sorted[0] ? formatPhone(sorted[0][0]) : formatPhone(schemaPhone!);
-  return result({ ...base, status: "passed", value, message: `The same phone number, ${only}, is used across the site${business?.street ? ", and the schema address matches" : ""}.` });
+  const mainDisplay = main ? main.phone.display : schemaPhone!.display;
+  const extra = sorted.length > 1 ? ` Other numbers listed alongside it: ${sorted.slice(1).map((e) => e.phone.display).join(", ")}.` : "";
+  return result({ ...base, status: "passed", value, message: `Your main number, ${mainDisplay}, is used consistently across the site${business?.street ? ", and the schema address matches" : ""}.${extra}` });
 }
 
 /* ---------- Map + service area ---------- */
@@ -405,10 +433,19 @@ export function runLocalSeoChecks(input: LocalSeoInput): CheckResult[] {
   const cities = extractCityNames($pages, business);
   const titles = input.pages.map((p, i) => ({ url: p.url, title: clean($pages[i]("title").first().text()) }));
 
+  // US state-code URL rules only make sense if the site shows a US "City, ST" address.
+  const usStates = $pages.some(($) => new RegExp(CITY_STATE_RE.source).test(visibleText($)));
+  // Crawled pages with Product schema are shop pages, not service/city pages.
+  const exclude = new Set(
+    input.pages
+      .filter((_, i) => extractJsonLd($pages[i]).some((n) => typesOf(n).includes("Product")))
+      .map((p) => pathOf(p.url).toLowerCase().replace(/\/+$/, "")),
+  );
+
   return [
     checkLocalBusinessSchema($pages),
     checkNapConsistency(input.pages, $pages, business),
-    checkServicePages(input, cities, titles),
+    checkServicePages(input, cities, titles, { usStates, exclude }),
     checkMapAndServiceArea($pages, business),
     checkSitemap(input),
   ];
