@@ -19,6 +19,9 @@ export const CATEGORY_WEIGHTS: Record<CheckCategory, number> = {
   speed: 0, // added in Phase 8
 };
 
+// Below this many scored checks, a category counts half (see computeScores).
+export const MIN_CHECKS_FOR_FULL_WEIGHT = 2;
+
 export const CATEGORY_LABELS: Record<CheckCategory, string> = {
   "lead-capture": "Lead capture",
   "local-seo": "Local SEO",
@@ -63,15 +66,19 @@ export function computeScores(checks: CheckResult[]): Scores {
 
   const raw = present.map((category) => {
     const list = checks.filter((c) => c.category === category);
-    return { category, score: scoreChecks(list), counts: countStatuses(list) };
+    const scoredCount = list.filter(scored).length;
+    // A category with only 1 scored check (the rest N/A) gets half its weight,
+    // so one check can't swing the whole Health Score.
+    const base = scoredCount === 0 ? 0 : CATEGORY_WEIGHTS[category] * (scoredCount < MIN_CHECKS_FOR_FULL_WEIGHT ? 0.5 : 1);
+    return { category, score: scoreChecks(list), counts: countStatuses(list), base };
   });
 
   // Categories with nothing to score give their share to the others.
-  const totalWeight = raw.reduce((sum, r) => sum + (r.score === null ? 0 : CATEGORY_WEIGHTS[r.category]), 0);
-  const categories: CategoryScore[] = raw.map((r) => ({
+  const totalWeight = raw.reduce((sum, r) => sum + r.base, 0);
+  const categories: CategoryScore[] = raw.map(({ base, ...r }) => ({
     ...r,
     label: CATEGORY_LABELS[r.category],
-    weight: r.score === null || totalWeight === 0 ? 0 : CATEGORY_WEIGHTS[r.category] / totalWeight,
+    weight: totalWeight === 0 ? 0 : base / totalWeight,
   }));
 
   const overall =

@@ -39,22 +39,43 @@ describe("computeScores", () => {
     expect(leadFails.overall!).toBeLessThan(onPageFails.overall!);
   });
   it("gives the full 4-category weights when all are present", () => {
+    const two = (id: string, cat: CheckCategory, s: CheckStatus) => [c(`${id}1`, cat, s), c(`${id}2`, cat, s)];
     const r = computeScores([
-      c("a", "lead-capture", "passed"),
-      c("b", "local-seo", "error"),
-      c("d", "trust", "error"),
-      c("e", "on-page", "error"),
+      ...two("a", "lead-capture", "passed"),
+      ...two("b", "local-seo", "error"),
+      ...two("d", "trust", "error"),
+      ...two("e", "on-page", "error"),
     ]);
     expect(r.overall).toBe(35);
     expect(r.categories.map((x) => x.weight)).toEqual([0.35, 0.25, 0.2, 0.2]);
   });
   it("shares out the weight of a category that is all N/A", () => {
-    const r = computeScores([c("a", "lead-capture", "passed"), c("b", "trust", "na"), c("d", "on-page", "error")]);
+    const r = computeScores([
+      c("a1", "lead-capture", "passed"),
+      c("a2", "lead-capture", "passed"),
+      c("b", "trust", "na"),
+      c("d1", "on-page", "error"),
+      c("d2", "on-page", "error"),
+    ]);
     const trust = r.categories.find((x) => x.category === "trust")!;
     expect(trust.score).toBeNull();
     expect(trust.weight).toBe(0);
     // lead 0.35 and on-page 0.2 -> 0.35/0.55 of 100
     expect(r.overall).toBe(64);
+  });
+  it("halves the weight of a category with only 1 scored check (e-commerce lead capture)", () => {
+    const checks = [
+      c("click-to-call", "lead-capture", "warning"),
+      c("quote-form", "lead-capture", "na"),
+      c("cta", "lead-capture", "na"),
+      c("t1", "on-page", "passed"),
+      c("t2", "on-page", "passed"),
+    ];
+    const r = computeScores(checks);
+    // lead 0.175 vs on-page 0.2 -> lead share 0.175/0.375
+    expect(r.categories[0].weight).toBeCloseTo(0.467, 3);
+    // Before: one warning cost ~38 points; now ~28.
+    expect(r.overall).toBe(72);
   });
   it("returns null overall when nothing can be scored", () => {
     expect(computeScores([c("a", "trust", "na")]).overall).toBeNull();
