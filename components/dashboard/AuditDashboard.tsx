@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import type { AuditBasicInfo } from "@/app/api/audit/route";
 import type { CheckResult, CheckStatus } from "@/lib/checks/types";
 import { CATEGORY_LABELS, computeScores, countStatuses, rankIssues, scoreBand, topReasons, type CategoryScore, type RankedIssue } from "@/lib/score";
+import type { PsiMetrics, SpeedResult } from "@/lib/pagespeed";
+import { higherIsBetter, LIMITS, lowerIsBetter } from "@/lib/checks/speed";
 import HealthRing from "./HealthRing";
 import { BAND_BAR, BAND_TEXT, STATUS } from "./status";
 
@@ -35,6 +37,7 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
       </div>
 
       <CategoryCards categories={scores.categories} />
+      <SpeedPanel speed={info.speed} />
       <IssuesList issues={issues} />
       <CollapsedList title="Passed checks" checks={info.checks.filter((c) => c.status === "passed")} />
       <CollapsedList title="Not applicable" checks={info.checks.filter((c) => c.status === "na")} />
@@ -122,7 +125,7 @@ function TopReasons({ reasons }: { reasons: (RankedIssue & { reason: string })[]
 
 function CategoryCards({ categories }: { categories: CategoryScore[] }) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
       {categories.map((c) => {
         const band = c.score === null ? null : scoreBand(c.score);
         const issues = c.counts.error + c.counts.warning + c.counts.notice;
@@ -137,13 +140,78 @@ function CategoryCards({ categories }: { categories: CategoryScore[] }) {
               <div className={`h-full ${band ? BAND_BAR[band] : ""}`} style={{ width: `${c.score ?? 0}%` }} />
             </div>
             <p className="mt-2 text-[11px] text-muted">
-              {c.score === null ? "Doesn't apply to this site" : issues === 0 ? "No issues" : `${issues} issue${issues === 1 ? "" : "s"}`}
+              {c.score === null
+                ? c.category === "speed"
+                  ? "Not measured this time"
+                  : "Doesn't apply to this site"
+                : issues === 0
+                  ? "No issues"
+                  : `${issues} issue${issues === 1 ? "" : "s"}`}
               {c.weight > 0 && ` · ${Math.round(c.weight * 100)}% of score`}
             </p>
           </section>
         );
       })}
     </div>
+  );
+}
+
+// Mobile + desktop speed side by side, with Core Web Vitals for each.
+function SpeedPanel({ speed }: { speed: SpeedResult }) {
+  if (!speed.mobile && !speed.desktop) {
+    return (
+      <section className="rounded-md border border-line bg-panel px-4 py-3 text-xs">
+        <span className="font-semibold text-ink">Speed couldn&apos;t be measured this time.</span>{" "}
+        <span className="text-muted">{speed.error} Speed checks are left out of the score.</span>
+      </section>
+    );
+  }
+
+  const status = (v: number | null, l: { good: number; ok: number }, higher = false): CheckStatus | null =>
+    v === null ? null : higher ? higherIsBetter(v, l) : lowerIsBetter(v, l);
+
+  const rows = [
+    { label: "Loading time (LCP)", get: (m: PsiMetrics) => m.lcpMs, fmt: (v: number) => `${(v / 1000).toFixed(1)} s`, limits: LIMITS.lcpMs, src: (m: PsiMetrics) => m.lcpSource },
+    { label: "Layout shift (CLS)", get: (m: PsiMetrics) => m.cls, fmt: (v: number) => v.toFixed(2), limits: LIMITS.cls, src: (m: PsiMetrics) => m.clsSource },
+    { label: "Tap response (INP)", get: (m: PsiMetrics) => m.inpMs, fmt: (v: number) => `${Math.round(v)} ms`, limits: LIMITS.inpMs, src: () => "field" as const },
+  ];
+
+  return (
+    <section className="overflow-hidden rounded-md border border-line bg-panel">
+      <h3 className="border-b border-line px-4 py-2.5 text-xs font-semibold text-ink">Speed (Google PageSpeed Insights)</h3>
+      <div className="grid divide-y divide-line sm:grid-cols-2 sm:divide-x sm:divide-y-0">
+        {([speed.mobile, speed.desktop] as const).map((m, i) => {
+          const device = i === 0 ? "Mobile" : "Desktop";
+          const s = m ? status(m.score, LIMITS.score, true) : null;
+          return (
+            <div key={device} className="px-4 py-3">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{device}</span>
+                <span className={`text-xl font-semibold tabular-nums ${s ? STATUS[s].text : "text-muted"}`}>
+                  {m?.score ?? "–"}
+                  <span className="text-xs font-normal text-muted"> /100</span>
+                </span>
+              </div>
+              <dl className="mt-2 divide-y divide-line text-xs">
+                {rows.map((r) => {
+                  const v = m ? r.get(m) : null;
+                  const st = status(v, r.limits);
+                  return (
+                    <div key={r.label} className="flex items-center justify-between gap-2 py-1.5">
+                      <dt className="text-muted">{r.label}</dt>
+                      <dd className="flex items-center gap-2">
+                        {v !== null && m && <span className="text-[10px] text-muted/80">{r.src(m) === "field" ? "real users" : "lab test"}</span>}
+                        <span className={`font-medium tabular-nums ${st ? STATUS[st].text : "text-muted"}`}>{v === null ? "no data" : r.fmt(v)}</span>
+                      </dd>
+                    </div>
+                  );
+                })}
+              </dl>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

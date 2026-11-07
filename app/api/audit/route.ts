@@ -6,9 +6,11 @@ import { runLocalSeoChecks } from "@/lib/checks/localSeo";
 import { runTrustChecks } from "@/lib/checks/trust";
 import { applySiteType } from "@/lib/checks/applicability";
 import { detectSiteType, type SiteType } from "@/lib/siteType";
+import { measureSpeed, type SpeedResult } from "@/lib/pagespeed";
+import { buildSpeedChecks } from "@/lib/checks/speed";
 import type { CheckResult } from "@/lib/checks/types";
 
-// Homepage (≤10 s) + mini crawl (≤25 s). Tells Vercel this route may run up to 60 s.
+// Homepage (≤10 s) + crawl and speed test in parallel (≤40 s). Tells Vercel this route may run up to 60 s.
 export const maxDuration = 60;
 
 // Shape of the JSON this route returns (the form imports this type).
@@ -24,6 +26,7 @@ export type AuditBasicInfo = {
   sitemapFound: boolean;
   siteType: SiteType;
   siteTypeSignals: string[];
+  speed: SpeedResult;
   checks: CheckResult[];
 };
 
@@ -40,8 +43,11 @@ export async function POST(request: Request) {
 
   try {
     const page = await fetchPage(url);
-    const crawl = await crawlSite({ url: page.finalUrl, html: page.html });
-
+    // Crawl (≤25 s) and Google's speed test (≤40 s) run at the same time.
+    const [crawl, speed] = await Promise.all([
+      crawlSite({ url: page.finalUrl, html: page.html }),
+      measureSpeed(page.finalUrl),
+    ]);
     const site = detectSiteType(crawl.pages);
 
     const checks = applySiteType(
@@ -50,6 +56,7 @@ export async function POST(request: Request) {
         ...runLocalSeoChecks(crawl),
         ...runTrustChecks(crawl),
         ...runOnPageChecks(page.html, page.finalUrl),
+        ...buildSpeedChecks(speed),
       ],
       site.type,
     );
@@ -65,6 +72,7 @@ export async function POST(request: Request) {
       sitemapFound: crawl.sitemapFound,
       siteType: site.type,
       siteTypeSignals: site.signals,
+      speed,
       checks,
     };
     return Response.json(info);

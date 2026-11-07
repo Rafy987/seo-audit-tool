@@ -12,11 +12,11 @@ export const STATUS_POINTS: Record<Exclude<CheckStatus, "na">, number> = {
 
 // How much each category counts toward the Health Score. Lead capture weighs the most.
 export const CATEGORY_WEIGHTS: Record<CheckCategory, number> = {
-  "lead-capture": 0.35,
+  "lead-capture": 0.3,
   "local-seo": 0.25,
-  trust: 0.2,
-  "on-page": 0.2,
-  speed: 0, // added in Phase 8
+  trust: 0.15,
+  "on-page": 0.15,
+  speed: 0.15,
 };
 
 // Below this many scored checks, a category counts half (see computeScores).
