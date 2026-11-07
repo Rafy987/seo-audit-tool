@@ -3,6 +3,7 @@ import { crawlSite } from "@/lib/crawl";
 import { runOnPageChecks } from "@/lib/checks/onPage";
 import { runLeadCaptureChecks } from "@/lib/checks/leadCapture";
 import { runLocalSeoChecks } from "@/lib/checks/localSeo";
+import { runTrustChecks } from "@/lib/checks/trust";
 import type { CheckResult } from "@/lib/checks/types";
 
 // Homepage (≤10 s) + mini crawl (≤25 s). Tells Vercel this route may run up to 60 s.
@@ -40,6 +41,7 @@ export async function POST(request: Request) {
     const checks = [
       ...runLeadCaptureChecks(page.html),
       ...runLocalSeoChecks(crawl),
+      ...runTrustChecks(crawl),
       ...runOnPageChecks(page.html, page.finalUrl),
     ];
     const info: AuditBasicInfo = {
