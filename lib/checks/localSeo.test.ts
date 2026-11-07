@@ -6,6 +6,7 @@ import {
   checkNapConsistency,
   checkServicePages,
   classifyPages,
+  extractCityNames,
   extractJsonLd,
   getBusinessSchema,
   runLocalSeoChecks,
@@ -84,6 +85,62 @@ describe("classifyPages", () => {
   });
   it("uses city names from schema", () => {
     expect(classifyPages([`${BASE}/campbell-flooring`], ["Campbell"]).city).toEqual(["/campbell-flooring"]);
+  });
+});
+
+describe("extractCityNames", () => {
+  it("reads a comma list after 'service area includes' (links and plain text)", () => {
+    const $ = load('<p>Our service area includes <a href="/flooring-oakland-ca">Oakland</a>, Castro Valley, San Leandro and Hayward.</p>');
+    expect(extractCityNames([$], null).sort()).toEqual(["Castro Valley", "Hayward", "Oakland", "San Leandro"]);
+  });
+  it("reads a list under an 'Areas We Serve' heading", () => {
+    const $ = load("<section><h2>Areas We Serve</h2><ul><li>Walnut Creek</li><li>Danville</li><li>Contact Us</li></ul></section>");
+    expect(extractCityNames([$], null).sort()).toEqual(["Danville", "Walnut Creek"]);
+  });
+  it("reads 'City, ST' text and schema cities", () => {
+    const $ = load("<footer>1300 Clay St, Oakland, CA 94612. Best Flooring Mountain View, CA</footer>");
+    const business = getBusinessSchema([load(ld(fullBusiness))]).business;
+    const cities = extractCityNames([$], business);
+    expect(cities).toEqual(expect.arrayContaining(["Oakland", "Mountain View", "San Jose", "Campbell"]));
+    expect(cities).not.toContain("View"); // too generic on its own
+  });
+  it("cleans marketing words out of 'City, ST' headings", () => {
+    const $ = load("<h2>Transform Your Saratoga, CA Home</h2><h2>Your San Jose, CA Flooring Experts</h2><p>Upgrade Your Palo Alto, CA floors</p>");
+    expect(extractCityNames([$], null).sort()).toEqual(["Palo Alto", "San Jose", "Saratoga"]);
+  });
+});
+
+describe("city pages from site city names", () => {
+  it("finds /castro-valley-flooring when Castro Valley is listed on the site", () => {
+    const { city } = classifyPages([`${BASE}/castro-valley-flooring`], ["Castro Valley"]);
+    expect(city).toEqual(["/castro-valley-flooring"]);
+  });
+  it("matches whole slug parts only", () => {
+    const { city } = classifyPages([`${BASE}/oakwood-floors`, `${BASE}/view-gallery`], ["Oak", "Mountain View"]);
+    expect(city).toEqual([]);
+  });
+  it("finds city pages by page title", () => {
+    const titles = [
+      { url: `${BASE}/`, title: "ABC Flooring | Oakland Flooring Store" },
+      { url: `${BASE}/our-work-1`, title: "Hardwood Floors in Hayward | ABC" },
+      { url: `${BASE}/about`, title: "About | ABC Flooring Oakland" },
+    ];
+    const { city } = classifyPages([], ["Hayward", "Oakland"], titles);
+    // Oakland is in the homepage title (site-wide home town), so /about doesn't count.
+    expect(city).toEqual(["/our-work-1"]);
+  });
+  it("ignores a city that's in most page titles", () => {
+    const titles = ["a", "b", "c", "d", "e"].map((p) => ({ url: `${BASE}/${p}`, title: `${p} | Hayward Floors` }));
+    expect(classifyPages([], ["Hayward"], titles).city).toEqual([]);
+  });
+  it("runLocalSeoChecks picks up cities from the page text", () => {
+    const home = '<title>ABC Flooring</title><p>Service area includes Oakland, Castro Valley and Fremont.</p>';
+    const r = runLocalSeoChecks({
+      pages: [{ url: `${BASE}/`, html: home }],
+      urls: [`${BASE}/castro-valley-flooring`, `${BASE}/hardwood-flooring`],
+      sitemapFound: true,
+    });
+    expect(r.find((c) => c.id === "service-city-pages")?.status).toBe("passed");
   });
 });
 

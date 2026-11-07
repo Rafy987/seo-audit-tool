@@ -139,13 +139,114 @@ const ONE_WORD_STATE_RE = /^[a-z]{4,}-(ak|az|ar|ca|ct|fl|ga|ia|il|ks|ky|md|mi|mn
 const SKIP_PATH_RE = /^\/(blog|news|articles?|tag|category|author|wp-|feed)(\/|$)|\/\d{4}\/\d{2}\//;
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function classifyPages(urls: string[], cities: string[] = []) {
-  const citySlugs = cities.map(slug).filter((s) => s.length >= 3);
+/* ---------- City names found on the site ---------- */
+
+const STATE_CODES =
+  "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|IA|ID|IL|IN|KS|KY|LA|MA|MD|ME|MI|MN|MO|MS|MT|NC|ND|NE|NH|NJ|NM|NV|NY|OH|OK|OR|PA|RI|SC|SD|TN|TX|UT|VA|VT|WA|WI|WV|WY";
+// "Castro Valley, CA" or "Oakland, CA 94612"
+const CITY_STATE_RE = new RegExp(`\\b([A-Z][a-z]+(?:[ -][A-Z][a-z]+){0,2}),\\s*(?:${STATE_CODES})\\b`, "g");
+// A token that looks like a place name: 1-3 capitalized words.
+const PLACE_RE = /^[A-Z][a-z]+(?:[ -][A-Z][a-z]+){0,2}$/;
+// Words that are never (part of) a city name in our context.
+const NOT_CITY_WORDS = new Set([
+  "we", "our", "the", "and", "call", "free", "estimate", "estimates", "contact", "us", "home", "more", "about",
+  "learn", "today", "now", "get", "quote", "read", "click", "here", "all", "areas", "area", "serve", "serving",
+  "service", "services", "surrounding", "nearby", "including", "cities", "communities", "flooring", "floors",
+  "hardwood", "roofing", "plumbing", "repair", "installation", "company", "inc", "llc", "best", "top",
+  "suite", "street", "st", "ave", "road", "blvd", "gallery", "reviews", "welcome",
+  "your", "my", "transform", "upgrade", "new", "in", "for", "near", "visit", "local", "trusted", "premier",
+]);
+// Fine inside a name ("Mountain View", "Castro Valley"), too generic on their own.
+const GENERIC_PLACE_PARTS = new Set(["view", "valley", "park", "city", "beach", "hill", "hills", "creek", "point", "heights", "springs", "lake", "grove", "village"]);
+
+// Adds the token if it looks like a city name. Returns true if it was added.
+function addPlace(out: Set<string>, raw: string): boolean {
+  const token = clean(raw)
+    .replace(/^([a-z]+\s+)+/, "") // drop leading small words: "includes Oakland" -> "Oakland"
+    .replace(/^&\s+/, "")
+    .replace(/[.:]$/, "");
+  if (!PLACE_RE.test(token) || token.length > 25) return false;
+  const words = token.toLowerCase().split(/[ -]/);
+  if (words.some((w) => NOT_CITY_WORDS.has(w))) return false;
+  if (words.length === 1 && GENERIC_PLACE_PARTS.has(words[0])) return false;
+  out.add(token);
+  return true;
+}
+
+// Text that follows an "Areas we serve" / "Service area" phrase.
+function serviceAreaTexts($: CheerioAPI): string[] {
+  const texts: string[] = [];
+  $("h1, h2, h3, h4, h5, h6, p, li, strong, b, span, div").each((_, el) => {
+    const $el = $(el);
+    const text = clean($el.text());
+    const m = text.match(AREA_TEXT_RE);
+    if (!m || text.length > 1500) return;
+
+    const after = text.slice((m.index ?? 0) + m[0].length);
+    if (after.length > 3) {
+      texts.push(after); // e.g. "service area includes Oakland, Castro Valley, ..."
+    } else {
+      // A heading on its own: the list is in the next elements.
+      let next = $el.nextAll().slice(0, 3);
+      if (next.length === 0) next = $el.parent().nextAll().slice(0, 2);
+      texts.push(clean(next.text()).slice(0, 1500));
+      next.find("li, a").each((_, item) => {
+        texts.push(clean($(item).text()));
+      });
+    }
+  });
+  return texts;
+}
+
+// City names the site mentions: schema, "Areas we serve" lists, and "City, ST" text.
+export function extractCityNames($pages: CheerioAPI[], business: BusinessInfo | null): string[] {
+  const out = new Set<string>();
+  for (const c of [business?.city, ...(business?.areaServed ?? [])]) if (c) addPlace(out, c);
+
+  for (const $ of $pages) {
+    for (const text of serviceAreaTexts($)) {
+      for (const part of text.split(/,|•|·|\||;|\/|\n|\s+and\s+|\s+&\s+/)) addPlace(out, part);
+    }
+    for (const m of visibleText($).matchAll(CITY_STATE_RE)) {
+      const words = m[1].split(" ");
+      if (addPlace(out, m[1]) || words.length < 2) continue;
+      // "Your San Jose, CA" -> "San Jose". "Best Flooring Oakland, CA" -> "Oakland".
+      // Try the last 2 words first; only fall back to the last word alone.
+      if (words.length === 3 && addPlace(out, words.slice(1).join(" "))) continue;
+      addPlace(out, words[words.length - 1]);
+    }
+  }
+  return [...out];
+}
+
+/* ---------- Service / city page detection ---------- */
+
+export type PageTitle = { url: string; title: string };
+
+export function classifyPages(urls: string[], cities: string[] = [], titles: PageTitle[] = []) {
+  const citySlugs = cities.map(slug).filter((s) => s.length >= 4);
+  // City name as a whole slug part: "castro-valley" in "castro-valley-flooring", not "oak" in "oakwood".
+  const slugMatchers = citySlugs.map((c) => new RegExp(`(^|-)${escapeRe(c)}(-|$)`));
+
+  // A city in the title of the homepage, or of most pages, is the business's home
+  // town used site-wide ("... | Oakland Flooring"), so it doesn't make a city page.
+  const homeTitle = titles.find((t) => new URL(t.url).pathname.replace(/\/+$/, "") === "")?.title ?? "";
+  const titleCities = cities.filter((c) => {
+    const re = new RegExp(`\\b${escapeRe(c)}\\b`, "i");
+    if (re.test(homeTitle)) return false;
+    const count = titles.filter((t) => re.test(t.title)).length;
+    return titles.length < 4 || count <= titles.length / 2;
+  });
+  const titleByPath = new Map(
+    titles.map((t) => [new URL(t.url).pathname.toLowerCase().replace(/\/+$/, ""), t.title] as const),
+  );
+
   const service = new Set<string>();
   const city = new Set<string>();
 
-  for (const u of urls) {
+  for (const u of [...urls, ...titles.map((t) => t.url)]) {
     let path: string;
     try {
       path = new URL(u).pathname.toLowerCase().replace(/\/+$/, "");
@@ -154,21 +255,23 @@ export function classifyPages(urls: string[], cities: string[] = []) {
     }
     if (!path || path === "/" || SKIP_PATH_RE.test(path)) continue;
     const last = path.split("/").pop() ?? "";
+    const title = titleByPath.get(path) ?? "";
 
     const isCity =
       AREA_HUB_RE.test(path) ||
       /(?<!built)-in-[a-z]{3,}/.test(last) ||
       STATE_SUFFIX_RE.test(last) ||
       ONE_WORD_STATE_RE.test(last) ||
-      citySlugs.some((c) => last.includes(c));
+      slugMatchers.some((re) => re.test(last)) ||
+      titleCities.some((c) => new RegExp(`\\b${escapeRe(c)}\\b`, "i").test(title));
     if (isCity) city.add(path);
     if (SERVICE_RE.test(last)) service.add(path);
   }
   return { service: [...service], city: [...city] };
 }
 
-export function checkServicePages(input: LocalSeoInput, cities: string[]): CheckResult {
-  const { service, city } = classifyPages(input.urls, cities);
+export function checkServicePages(input: LocalSeoInput, cities: string[], titles: PageTitle[] = []): CheckResult {
+  const { service, city } = classifyPages(input.urls, cities, titles);
   const base = { id: "service-city-pages", title: "Service & city pages", weight: 8, value: `${service.length} service, ${city.length} city pages` };
   const noSitemap = input.sitemapFound ? "" : " (We also couldn't find a sitemap.xml, so we only checked links from the homepage.)";
 
@@ -299,12 +402,13 @@ export function checkMapAndServiceArea($pages: CheerioAPI[], business: BusinessI
 export function runLocalSeoChecks(input: LocalSeoInput): CheckResult[] {
   const $pages = input.pages.map((p) => cheerio.load(p.html));
   const { business } = getBusinessSchema($pages);
-  const cities = [business?.city, ...(business?.areaServed ?? [])].filter((c): c is string => !!c);
+  const cities = extractCityNames($pages, business);
+  const titles = input.pages.map((p, i) => ({ url: p.url, title: clean($pages[i]("title").first().text()) }));
 
   return [
     checkLocalBusinessSchema($pages),
     checkNapConsistency(input.pages, $pages, business),
-    checkServicePages(input, cities),
+    checkServicePages(input, cities, titles),
     checkMapAndServiceArea($pages, business),
     checkSitemap(input),
   ];
