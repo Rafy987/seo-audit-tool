@@ -1,4 +1,6 @@
 import { fetchPage, FetchPageError } from "@/lib/fetchPage";
+import { runOnPageChecks } from "@/lib/checks/onPage";
+import type { CheckResult } from "@/lib/checks/types";
 
 // Shape of the JSON this route returns (the form imports this type).
 export type AuditBasicInfo = {
@@ -9,14 +11,8 @@ export type AuditBasicInfo = {
   bytes: number;
   redirects: number;
   title: string | null;
+  checks: CheckResult[];
 };
-
-function extractTitle(html: string): string | null {
-  // Simple regex for now; Phase 3 switches to cheerio.
-  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-  const title = match?.[1].replace(/\s+/g, " ").trim();
-  return title || null;
-}
 
 export async function POST(request: Request) {
   let url: unknown;
@@ -31,6 +27,7 @@ export async function POST(request: Request) {
 
   try {
     const page = await fetchPage(url);
+    const checks = runOnPageChecks(page.html, page.finalUrl);
     const info: AuditBasicInfo = {
       requestedUrl: page.requestedUrl,
       finalUrl: page.finalUrl,
@@ -38,7 +35,8 @@ export async function POST(request: Request) {
       loadMs: page.loadMs,
       bytes: page.bytes,
       redirects: page.redirects,
-      title: extractTitle(page.html),
+      title: checks.find((c) => c.id === "title")?.value ?? null,
+      checks,
     };
     return Response.json(info);
   } catch (err) {

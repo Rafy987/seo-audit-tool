@@ -3,6 +3,55 @@
 import { useState } from "react";
 import { normalizeUrl } from "@/lib/url";
 import type { AuditBasicInfo } from "@/app/api/audit/route";
+import type { CheckResult, CheckStatus } from "@/lib/checks/types";
+
+// Status -> label + Tailwind classes (colors come from globals.css tokens).
+const STATUS: Record<CheckStatus, { label: string; badge: string; bar: string }> = {
+  error: { label: "Error", badge: "bg-error-soft text-error", bar: "bg-error" },
+  warning: { label: "Warning", badge: "bg-warning-soft text-warning", bar: "bg-warning" },
+  notice: { label: "Notice", badge: "bg-notice-soft text-notice", bar: "bg-notice" },
+  passed: { label: "Passed", badge: "bg-passed-soft text-passed", bar: "bg-passed" },
+};
+const ORDER: CheckStatus[] = ["error", "warning", "notice", "passed"];
+
+function CheckList({ checks }: { checks: CheckResult[] }) {
+  const sorted = [...checks].sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
+  const counts = ORDER.map((s) => [s, checks.filter((c) => c.status === s).length] as const);
+
+  return (
+    <div className="mt-4 overflow-hidden rounded border border-line">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-page px-3 py-2">
+        <span className="text-xs font-semibold text-ink">On-page SEO</span>
+        <div className="flex gap-1.5">
+          {counts.map(([s, n]) => (
+            <span key={s} className={`rounded px-2 py-0.5 text-[11px] font-medium ${STATUS[s].badge}`}>
+              {n} {STATUS[s].label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <ul className="divide-y divide-line">
+        {sorted.map((c) => (
+          <li key={c.id} className="flex gap-3 px-3 py-2.5">
+            <span className={`mt-0.5 w-1 shrink-0 rounded-full ${STATUS[c.status].bar}`} aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-ink">{c.title}</span>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATUS[c.status].badge}`}>
+                  {STATUS[c.status].label}
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted">{c.message}</p>
+              {c.value && c.status !== "passed" && (
+                <p className="mt-1 truncate text-[11px] text-muted/80">Found: {c.value}</p>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 export default function AuditForm() {
   const [value, setValue] = useState("");
@@ -82,7 +131,12 @@ export default function AuditForm() {
         )}
       </form>
 
-      {result && <BasicInfo info={result} />}
+      {result && (
+        <>
+          <BasicInfo info={result} />
+          <CheckList checks={result.checks} />
+        </>
+      )}
     </div>
   );
 }
