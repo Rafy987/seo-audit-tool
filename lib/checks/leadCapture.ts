@@ -1,7 +1,7 @@
 import * as cheerio from "cheerio";
 import type { CheerioAPI } from "cheerio";
 import type { CheckResult } from "./types";
-import { clean } from "./utils";
+import { clean, PHONE_RE } from "./utils";
 
 // Lead capture checks: can a homeowner call or ask for a quote easily?
 // All pure functions on parsed HTML. No network.
@@ -19,9 +19,6 @@ const HEADER_SEL =
 export const FOLD_CHARS = 500;
 
 const SKIP_TAGS = new Set(["script", "style", "noscript", "template", "svg"]);
-
-// US phone numbers written with separators: (214) 555-1234, 214-555-1234, +1 214.555.1234
-const PHONE_RE = /(?:\+?1[\s.-]?)?(?:\(\d{3}\)\s?|\d{3}[\s.-])\d{3}[\s.-]\d{4}\b/;
 
 // Strong "ask for a quote" wording.
 const CTA_RE =

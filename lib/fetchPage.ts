@@ -82,13 +82,19 @@ async function readLimited(res: Response): Promise<{ text: string; bytes: number
   return { text: new TextDecoder().decode(Buffer.concat(chunks)), bytes };
 }
 
-export async function fetchPage(input: string): Promise<FetchedPage> {
+export type FetchOptions = {
+  timeoutMs?: number; // default 10 s
+  accept?: "html" | "text"; // "text" also allows XML (sitemaps) and plain text (robots.txt)
+};
+
+export async function fetchPage(input: string, options: FetchOptions = {}): Promise<FetchedPage> {
+  const { timeoutMs = TIMEOUT_MS, accept = "html" } = options;
   const normalized = normalizeUrl(input);
   if (!normalized.ok) throw new FetchPageError(normalized.error);
 
   const requestedUrl = normalized.url;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   const started = Date.now();
 
   try {
@@ -106,7 +112,7 @@ export async function fetchPage(input: string): Promise<FetchedPage> {
         cache: "no-store",
         headers: {
           "User-Agent": USER_AGENT,
-          Accept: "text/html,application/xhtml+xml",
+          Accept: accept === "html" ? "text/html,application/xhtml+xml" : "text/html,application/xml,text/xml,text/plain;q=0.9,*/*;q=0.5",
           "Accept-Language": "en-US,en;q=0.9",
         },
       });
@@ -130,7 +136,8 @@ export async function fetchPage(input: string): Promise<FetchedPage> {
       }
 
       const type = res.headers.get("content-type") ?? "";
-      if (type && !type.includes("html")) {
+      const typeOk = accept === "html" ? type.includes("html") : /html|xml|text\/plain/.test(type);
+      if (type && !typeOk) {
         throw new FetchPageError("That address isn't a web page (it returned a file instead).", 415);
       }
 
@@ -150,7 +157,7 @@ export async function fetchPage(input: string): Promise<FetchedPage> {
   } catch (err) {
     if (err instanceof FetchPageError) throw err;
     if (controller.signal.aborted) {
-      throw new FetchPageError("The site took too long to respond (over 10 seconds).", 504);
+      throw new FetchPageError(`The site took too long to respond (over ${Math.round(timeoutMs / 1000)} seconds).`, 504);
     }
     throw new FetchPageError("We couldn't connect to that website. It may be down or blocking us.", 502);
   } finally {

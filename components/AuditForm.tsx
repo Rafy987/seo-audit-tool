@@ -140,6 +140,12 @@ export default function AuditForm() {
           </button>
         </div>
 
+        {loading && (
+          <p className="mt-2 text-xs text-muted" role="status">
+            Fetching the homepage and checking up to 20 pages. This can take up to 30 seconds.
+          </p>
+        )}
+
         {error && (
           <p id="site-url-error" role="alert" className="mt-2 rounded border border-error/30 bg-error-soft px-3 py-2 text-xs text-error">
             {error}
@@ -165,6 +171,7 @@ function BasicInfo({ info }: { info: AuditBasicInfo }) {
     ["Redirects", String(info.redirects)],
     ["Response time", `${(info.loadMs / 1000).toFixed(2)} s`],
     ["HTML size", `${(info.bytes / 1024).toFixed(1)} KB`],
+    ["Pages checked", `${info.pagesCrawled}${info.sitemapFound ? " (sitemap found)" : " (no sitemap found)"}`],
   ];
 
   return (

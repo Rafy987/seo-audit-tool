@@ -1,7 +1,12 @@
 import { fetchPage, FetchPageError } from "@/lib/fetchPage";
+import { crawlSite } from "@/lib/crawl";
 import { runOnPageChecks } from "@/lib/checks/onPage";
 import { runLeadCaptureChecks } from "@/lib/checks/leadCapture";
+import { runLocalSeoChecks } from "@/lib/checks/localSeo";
 import type { CheckResult } from "@/lib/checks/types";
+
+// Homepage (≤10 s) + mini crawl (≤25 s). Tells Vercel this route may run up to 60 s.
+export const maxDuration = 60;
 
 // Shape of the JSON this route returns (the form imports this type).
 export type AuditBasicInfo = {
@@ -12,6 +17,8 @@ export type AuditBasicInfo = {
   bytes: number;
   redirects: number;
   title: string | null;
+  pagesCrawled: number;
+  sitemapFound: boolean;
   checks: CheckResult[];
 };
 
@@ -28,8 +35,11 @@ export async function POST(request: Request) {
 
   try {
     const page = await fetchPage(url);
+    const crawl = await crawlSite({ url: page.finalUrl, html: page.html });
+
     const checks = [
       ...runLeadCaptureChecks(page.html),
+      ...runLocalSeoChecks(crawl),
       ...runOnPageChecks(page.html, page.finalUrl),
     ];
     const info: AuditBasicInfo = {
@@ -40,6 +50,8 @@ export async function POST(request: Request) {
       bytes: page.bytes,
       redirects: page.redirects,
       title: checks.find((c) => c.id === "title")?.value ?? null,
+      pagesCrawled: crawl.pages.length,
+      sitemapFound: crawl.sitemapFound,
       checks,
     };
     return Response.json(info);
