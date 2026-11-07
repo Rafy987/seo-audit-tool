@@ -82,6 +82,25 @@ describe("checkImageAlt", () => {
   it("passes when all images have alt", () => {
     expect(checkImageAlt($('<img src="a.jpg" alt="Roof">')).status).toBe("passed");
   });
+  it("uses 'has' for one missing and 'have' for more", () => {
+    expect(checkImageAlt($('<img src="a.jpg"><img src="b.jpg" alt="x">')).message).toContain("1 of 2 images has no alt text");
+    expect(checkImageAlt($('<img src="a.jpg"><img src="b.jpg">')).message).toContain("2 of 2 images have no alt text");
+  });
+  it("counts lazy-loaded images", () => {
+    const html = `
+      <img src="data:image/gif;base64,R0lGOD" data-src="/a.jpg" alt="Floor">
+      <img data-lazy-src="/b.jpg">
+      <img srcset="/c.jpg 1x, /c@2x.jpg 2x" alt="Deck">`;
+    expect(checkImageAlt($(html)).value).toBe("1 of 3 missing");
+  });
+  it("skips noscript duplicates and tracking pixels", () => {
+    const html = `
+      <img data-src="/a.jpg" alt="Floor"><noscript><img src="/a.jpg"></noscript>
+      <img src="https://px.example.com/t.gif" width="1" height="1">`;
+    const r = checkImageAlt($(html));
+    expect(r.status).toBe("passed");
+    expect(r.message).toBe("The only image has alt text.");
+  });
 });
 
 describe("checkCanonical", () => {

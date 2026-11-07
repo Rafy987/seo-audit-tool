@@ -62,18 +62,35 @@ export function checkH2($: CheerioAPI): CheckResult {
   return result({ ...base, status: "passed", message: `${count} H2 subheading${count === 1 ? "" : "s"} found.` });
 }
 
-export function checkImageAlt($: CheerioAPI): CheckResult {
-  const imgs = $("img");
-  const missing = imgs.filter((_, el) => !clean($(el).attr("alt"))).length;
-  const base = { id: "img-alt", title: "Image alt text", weight: 4, value: `${missing} of ${imgs.length} missing` };
+// Content images on the page. Lazy-loaded images (data-src, data-lazy-src,
+// srcset...) are still <img> tags, so they're included. We skip:
+// - <img> inside <noscript> (lazy-load plugins add these as duplicate fallbacks)
+// - 1x1 / 0x0 tracking pixels
+export function getContentImages($: CheerioAPI) {
+  return $("img").filter((_, el) => {
+    if ($(el).closest("noscript").length > 0) return false;
+    const w = clean($(el).attr("width"));
+    const h = clean($(el).attr("height"));
+    const isPixel = (w === "0" || w === "1") && (h === "0" || h === "1");
+    return !isPixel;
+  });
+}
 
-  if (imgs.length === 0) {
+export function checkImageAlt($: CheerioAPI): CheckResult {
+  const imgs = getContentImages($);
+  const total = imgs.length;
+  const missing = imgs.filter((_, el) => !clean($(el).attr("alt"))).length;
+  const base = { id: "img-alt", title: "Image alt text", weight: 4, value: `${missing} of ${total} missing` };
+
+  if (total === 0) {
     return result({ ...base, status: "notice", value: "0 images", message: "No images found. Photos of real projects build trust and can rank in Google Images." });
   }
   if (missing > 0) {
-    return result({ ...base, status: "warning", message: `${missing} of ${imgs.length} images have no alt text. Describe each photo, e.g. "New shingle roof installed in Plano, TX".` });
+    const verb = missing === 1 ? "has" : "have";
+    return result({ ...base, status: "warning", message: `${missing} of ${total} images ${verb} no alt text. Describe what each photo shows, e.g. "Kitchen flooring installed in San Jose".` });
   }
-  return result({ ...base, status: "passed", message: `All ${imgs.length} images have alt text.` });
+  const msg = total === 1 ? "The only image has alt text." : `All ${total} images have alt text.`;
+  return result({ ...base, status: "passed", message: msg });
 }
 
 export function checkCanonical($: CheerioAPI, pageUrl: string): CheckResult {
