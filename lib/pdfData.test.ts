@@ -28,6 +28,7 @@ const info: AuditBasicInfo = {
   sitemapFound: true,
   siteType: "contractor",
   siteTypeSignals: [],
+  preparedBy: null,
   speed: { mobile: { strategy: "mobile", score: 42, lcpMs: 12_000, lcpSource: "lab", cls: 0.03, clsSource: "lab", inpMs: null }, desktop: { strategy: "desktop", score: 67, lcpMs: 1500, lcpSource: "lab", cls: 0.01, clsSource: "lab", inpMs: null } },
   checks: [
     check("click-to-call", "passed", { title: "Click-to-call phone link" }),
@@ -88,5 +89,23 @@ describe("AuditPdf (smoke test)", () => {
     const buffer = await renderToBuffer(doc);
     expect(buffer.subarray(0, 4).toString()).toBe("%PDF");
     expect(buffer.length).toBeGreaterThan(2000);
+  }, 30_000);
+});
+
+describe("PDF extras from user feedback", () => {
+  it("adds 'mobile weighted more' next to the Speed score only", () => {
+    const d = buildPdfData(info, report, NOW);
+    expect(d.categories.find((c) => c.label === "Speed")?.note).toBe("mobile weighted more");
+    expect(d.categories.filter((c) => c.note)).toHaveLength(1);
+  });
+  it("includes the Prepared by block only when set", () => {
+    expect(buildPdfData(info, report, NOW).preparedBy).toBeNull();
+    const pb = { name: "Abdul Rafy", email: "rafy@example.com" };
+    expect(buildPdfData({ ...info, preparedBy: pb }, report, NOW).preparedBy).toEqual(pb);
+  });
+  it("renders the PDF with the Prepared by block", async () => {
+    const data = buildPdfData({ ...info, preparedBy: { name: "Abdul Rafy", email: "rafy@example.com", url: "https://linkedin.com/in/rafy" } }, report, NOW);
+    const buffer = await renderToBuffer(createElement(AuditPdf, { data }) as unknown as ReactElement<DocumentProps>);
+    expect(buffer.subarray(0, 4).toString()).toBe("%PDF");
   }, 30_000);
 });

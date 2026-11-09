@@ -80,7 +80,10 @@ export default function AuditPdf({ data }: { data: PdfData }) {
               {data.categories.map((c) => (
                 <View key={c.label} style={{ marginBottom: 7 }}>
                   <View style={[s.row, { justifyContent: "space-between" }]}>
-                    <Text>{c.label}</Text>
+                    <Text>
+                      {c.label}
+                      {c.note && <Text style={{ fontSize: 7.5, color: C.muted }}>  ({c.note})</Text>}
+                    </Text>
                     <Text style={{ fontFamily: "Helvetica-Bold", color: scoreColor(c.score) }}>{c.score === null ? "N/A" : `${c.score}/100`}</Text>
                   </View>
                   <View style={{ height: 4, backgroundColor: C.page, marginTop: 2 }}>
@@ -172,6 +175,17 @@ export default function AuditPdf({ data }: { data: PdfData }) {
               </Text>
             ))}
           </View>
+
+          {/* Optional "Prepared by" (from .env.local); hidden when not set. */}
+          {data.preparedBy && (
+            <View style={[s.panel, { marginTop: 16 }]} wrap={false}>
+              <Text style={s.label}>Prepared by</Text>
+              {data.preparedBy.name && <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 11, marginTop: 3 }}>{data.preparedBy.name}</Text>}
+              {data.preparedBy.email && <Text style={[s.para, { marginTop: 1 }]}>{data.preparedBy.email}</Text>}
+              {data.preparedBy.url && <Text style={[s.para, { color: C.muted }]}>{data.preparedBy.url}</Text>}
+              <Text style={[s.para, { marginTop: 6, fontFamily: "Helvetica-Bold", color: C.brand }]}>Want help fixing these? Reply to this email.</Text>
+            </View>
+          )}
         </View>
 
         {/* Footer on every page ("fixed" repeats an element on each page). */}

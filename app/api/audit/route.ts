@@ -8,6 +8,7 @@ import { applySiteType } from "@/lib/checks/applicability";
 import { detectSiteType, type SiteType } from "@/lib/siteType";
 import { measureSpeed, type SpeedResult } from "@/lib/pagespeed";
 import { buildSpeedChecks } from "@/lib/checks/speed";
+import { getPreparedBy, type PreparedBy } from "@/lib/preparedBy";
 import type { CheckResult } from "@/lib/checks/types";
 
 // Homepage (≤10 s) + crawl and speed test in parallel (≤40 s). Tells Vercel this route may run up to 60 s.
@@ -27,6 +28,7 @@ export type AuditBasicInfo = {
   siteType: SiteType;
   siteTypeSignals: string[];
   speed: SpeedResult;
+  preparedBy: PreparedBy | null; // for the PDF, from .env.local
   checks: CheckResult[];
 };
 
@@ -73,6 +75,7 @@ export async function POST(request: Request) {
       siteType: site.type,
       siteTypeSignals: site.signals,
       speed,
+      preparedBy: getPreparedBy(),
       checks,
     };
     return Response.json(info);

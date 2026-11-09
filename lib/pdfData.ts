@@ -1,6 +1,7 @@
 import type { AuditBasicInfo } from "@/app/api/audit/route";
 import type { AiReport } from "./aiReport";
 import type { CheckStatus } from "./checks/types";
+import type { PreparedBy } from "./preparedBy";
 import { CATEGORY_LABELS, computeScores, countStatuses, rankIssues, scoreBand, topReasons } from "./score";
 
 // Everything the PDF shows, already formatted. Pure function (tested), so the
@@ -16,7 +17,8 @@ export type PdfData = {
   siteTypeNote: string | null;
   overall: number | null;
   bandLabel: string;
-  categories: { label: string; score: number | null }[];
+  categories: { label: string; score: number | null; note?: string }[];
+  preparedBy: PreparedBy | null;
   counts: { errors: number; warnings: number; notices: number; passed: number };
   summary: string | null; // AI summary, if the report was written
   fixes: { title: string; detail: string }[];
@@ -30,6 +32,8 @@ export type PdfData = {
 };
 
 const MAX_ISSUES = 20;
+// The mobile speed check weighs more than desktop (see lib/checks/speed.ts WEIGHTS).
+export const SPEED_NOTE = "mobile weighted more";
 const BAND_LABEL = { poor: "Losing leads", fair: "Needs work", good: "In good shape" } as const;
 
 // The PDF uses the built-in Helvetica font, which can't draw some Unicode
@@ -76,7 +80,8 @@ export function buildPdfData(info: AuditBasicInfo, report: AiReport | null, now 
         : "LeadLeak is built for contractor and home-service websites; some checks don't apply to this site and are not scored.",
     overall,
     bandLabel: overall === null ? "" : BAND_LABEL[scoreBand(overall)],
-    categories: categories.map((c) => ({ label: c.label, score: c.score })),
+    categories: categories.map((c) => ({ label: c.label, score: c.score, ...(c.category === "speed" && { note: SPEED_NOTE }) })),
+    preparedBy: info.preparedBy ?? null,
     counts: { errors: counts.error, warnings: counts.warning, notices: counts.notice, passed: counts.passed },
     summary: report ? pdfText(report.summary) : null,
     fixes,

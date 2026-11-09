@@ -91,9 +91,9 @@ describe("buildSpeedChecks", () => {
     expect(lcp.message).toContain("6.2 s");
     expect(lcp.message).toContain("phone");
   });
-  it("gives INP a Notice when there's no real-user data", () => {
+  it("makes INP N/A (grey, no points) when there's no real-user data", () => {
     const checks = buildSpeedChecks({ mobile: parsePsi(lab(0.9, 2000, 0), "mobile"), desktop: null });
-    expect(checks.find((c) => c.id === "inp")?.status).toBe("notice");
+    expect(checks.find((c) => c.id === "inp")?.status).toBe("na");
     expect(checks.find((c) => c.id === "speed-desktop")?.status).toBe("na");
   });
   it("marks every speed check N/A when the test failed", () => {

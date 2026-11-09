@@ -70,16 +70,16 @@ describe("parseReport", () => {
 
 describe("reviewReport", () => {
   const facts = JSON.stringify(buildReportFacts(input));
-  const r = (summary: string, detail = "Fix it.") => ({ summary, fixes: [{ title: "Do this", detail }] });
+  const r = (summary: string, detail = "Fix it so more people call you.") => ({ summary, fixes: [{ title: "Do this", detail }] });
 
   it("passes a clean report that only uses numbers from the facts", () => {
-    expect(reviewReport(r("Your site is losing leads because your phone isn't tappable.", "Mobile speed is 44 out of 100; aim for 90."), facts)).toEqual([]);
+    expect(reviewReport(r("Your site is losing leads because your phone isn't tappable.", "Mobile speed is 44 out of 100; aim for 90 so more people call you."), facts)).toEqual([]);
   });
   it("flags jargon and made-up numbers (the bugs seen in the first live test)", () => {
     const problems = reviewReport(r("Your site is losing leads because LCP is slow. Minify CSS.", "Raise the speed score above 80."), facts);
     expect(problems[0]).toContain("LCP");
     expect(problems[0]).toContain("minify");
-    expect(problems[1]).toContain("80");
+    expect(problems.join(" ")).toContain("80");
   });
   it("flags a fix for something that already passed (live bug: 'Add tap-to-call' when the phone was tappable)", () => {
     const okPhone = { ...input, checks: [...input.checks.filter((c) => c.id !== "click-to-call"), check("click-to-call", "passed", { title: "Click-to-call phone link" })] };
@@ -155,5 +155,23 @@ describe("generateReport (fetch mocked, no network)", () => {
     await expect(generateReport(input, undefined)).rejects.toThrow(/isn't set up/);
     vi.stubGlobal("fetch", vi.fn(() => groqReply("", 429)));
     await expect(generateReport(input, "k")).rejects.toThrow(/limit/);
+  });
+});
+
+describe("wording rules from user feedback", () => {
+  const facts = JSON.stringify(buildReportFacts(input));
+  const r = (detail: string) => ({ summary: "Your site is losing leads because it is slow.", fixes: [{ title: "Speed up the site", detail }] });
+
+  it("flags 'computer' and odd phrases like 'waiting for a call'", () => {
+    const problems = reviewReport(r("Your computer score is low; this keeps visitors waiting for a call."), facts).join(" ");
+    expect(problems).toContain("computer");
+    expect(problems).toContain("waiting for a call");
+  });
+  it("requires every fix to say how it gets more calls or quote requests", () => {
+    expect(reviewReport(r("Smaller photos load faster."), facts).join(" ")).toContain("how it gets more calls");
+    expect(reviewReport(r("Smaller photos load faster, so more people request a quote."), facts)).toEqual([]);
+  });
+  it("cleanup turns 'computer' into 'desktop'", () => {
+    expect(plainEnglish("Your computer score is 67. It is slow on a computer.")).toBe("Your desktop score is 67. It is slow on desktop.");
   });
 });

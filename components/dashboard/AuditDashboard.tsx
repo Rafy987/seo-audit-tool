@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { AuditBasicInfo } from "@/app/api/audit/route";
 import type { ReportResponse } from "@/app/api/report/route";
 import type { AiReport } from "@/lib/aiReport";
+import { SPEED_NOTE } from "@/lib/pdfData";
 import type { CheckResult, CheckStatus } from "@/lib/checks/types";
 import { CATEGORY_LABELS, computeScores, countStatuses, rankIssues, scoreBand, topReasons, type CategoryScore, type RankedIssue } from "@/lib/score";
 import type { PsiMetrics, SpeedResult } from "@/lib/pagespeed";
@@ -251,7 +252,10 @@ function CategoryCards({ categories }: { categories: CategoryScore[] }) {
         const issues = c.counts.error + c.counts.warning + c.counts.notice;
         return (
           <section key={c.category} className="rounded-md border border-line bg-panel p-3">
-            <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted">{c.label}</h3>
+            <h3 className="text-[11px] font-medium uppercase tracking-wide text-muted">
+              {c.label}
+              {c.category === "speed" && <span className="ml-1 font-normal normal-case tracking-normal text-muted/80">({SPEED_NOTE})</span>}
+            </h3>
             <p className={`mt-1 text-2xl font-semibold tabular-nums ${band ? BAND_TEXT[band] : "text-muted"}`}>
               {c.score ?? "N/A"}
               {c.score !== null && <span className="text-xs font-normal text-muted"> /100</span>}

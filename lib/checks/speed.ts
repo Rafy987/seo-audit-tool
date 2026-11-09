@@ -33,7 +33,7 @@ const TITLES: Record<(typeof IDS)[number], string> = {
 const WEIGHTS: Record<(typeof IDS)[number], number> = { "speed-mobile": 10, "speed-desktop": 4, lcp: 8, cls: 5, inp: 4 };
 
 function scoreCheck(m: PsiMetrics | null, id: "speed-mobile" | "speed-desktop", failReason?: string): CheckResult {
-  const device = id === "speed-mobile" ? "phones" : "computers";
+  const device = id === "speed-mobile" ? "phones" : "desktop";
   const base = { id, title: TITLES[id], weight: WEIGHTS[id] };
   if (!m || m.score === null) {
     const why = failReason ? ` ${failReason}` : "";
@@ -43,8 +43,8 @@ function scoreCheck(m: PsiMetrics | null, id: "speed-mobile" | "speed-desktop", 
   const value = `${m.score}/100`;
   const messages: Record<CheckStatus, string> = {
     passed: `Fast on ${device}: ${m.score}/100.`,
-    warning: `Speed score on ${device} is ${m.score}/100. ${id === "speed-mobile" ? "Most homeowners browse on their phone, and a slow site loses calls." : "Room to improve."}`,
-    error: `Speed score on ${device} is only ${m.score}/100. ${id === "speed-mobile" ? "Many visitors on phones will leave before your page finishes loading." : "The site is slow even on a computer."}`,
+    warning: `Speed score on ${device} is ${m.score}/100. ${id === "speed-mobile" ? "Most homeowners browse on their phone, and a slow site loses calls." : "People who compare contractors on desktop give up on slow sites before they ask for a quote."}`,
+    error: `Speed score on ${device} is only ${m.score}/100. ${id === "speed-mobile" ? "Many visitors on phones will leave before your page finishes loading." : "The site is slow even on desktop."}`,
     notice: "",
     na: "",
   };
@@ -60,7 +60,7 @@ export function buildSpeedChecks(speed: SpeedResult | null): CheckResult[] {
 
   // Core Web Vitals: use mobile numbers (what Google ranks on), else desktop.
   const m = speed.mobile ?? speed.desktop!;
-  const device = m.strategy === "mobile" ? "a phone" : "a computer";
+  const device = m.strategy === "mobile" ? "a phone" : "desktop";
   const checks: CheckResult[] = [
     scoreCheck(speed.mobile, "speed-mobile", speed.failed?.mobile),
     scoreCheck(speed.desktop, "speed-desktop", speed.failed?.desktop),
@@ -113,7 +113,8 @@ export function buildSpeedChecks(speed: SpeedResult | null): CheckResult[] {
   {
     const base = { id: "inp", title: TITLES.inp, weight: WEIGHTS.inp };
     if (m.inpMs === null) {
-      checks.push(result({ ...base, status: "notice", message: "Not enough real-user data yet. Google needs more Chrome visitors to measure how fast buttons respond on this site." }));
+      // Not a problem the owner can fix, so N/A (grey, no points) instead of a Notice.
+      checks.push(result({ ...base, status: "na", message: "Not enough real-user data yet. Google needs more Chrome visitors to measure how fast buttons respond on this site." }));
     } else {
       const status = lowerIsBetter(m.inpMs, LIMITS.inpMs);
       const v = `${Math.round(m.inpMs)} ms`;

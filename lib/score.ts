@@ -143,7 +143,7 @@ const REASONS: Record<string, Partial<Record<CheckStatus, string>>> = {
   "img-alt": { warning: "Your photos have no descriptions for Google" },
   links: { warning: "Visitors can't easily reach your other pages" },
   "speed-mobile": { error: "Your site is too slow on phones", warning: "Your site is slow on phones" },
-  "speed-desktop": { error: "Your site is slow even on computers", warning: "Your site could load faster on computers" },
+  "speed-desktop": { error: "Your site is slow even on desktop", warning: "Your site could load faster on desktop" },
   lcp: { error: "Your page takes too long to show up on a phone", warning: "Your page is slow to show up on a phone" },
   cls: { error: "Your page jumps around while it loads", warning: "Your page shifts a little while it loads" },
   inp: { error: "Buttons react slowly when tapped", warning: "Buttons are a bit slow to react when tapped" },
