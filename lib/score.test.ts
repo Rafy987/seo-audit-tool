@@ -122,6 +122,10 @@ describe("topReasons", () => {
     expect(r[0].reason).toBe("Your phone number isn't clickable on mobile");
     expect(r.map((x) => x.id)).not.toContain("rating-schema");
   });
+  it("has contractor wording for speed problems", () => {
+    expect(reasonFor(c("speed-mobile", "speed", "error"))).toBe("Your site is too slow on phones");
+    expect(reasonFor(c("cls", "speed", "error"))).toBe("Your page jumps around while it loads");
+  });
   it("falls back to the check title", () => {
     expect(reasonFor(c("something-new", "trust", "warning"))).toBe("something-new");
   });
