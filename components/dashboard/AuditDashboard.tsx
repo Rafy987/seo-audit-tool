@@ -25,11 +25,14 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
     [info.checks],
   );
 
+  // The AI report lives here so both the Summary panel and the PDF use it.
+  const report = useAiReport(info);
+
   return (
     <div className="mt-6 space-y-4">
       <SiteTypeBanner info={info} />
-      <SummaryBar info={info} />
-      <WrittenSummary info={info} />
+      <SummaryBar info={info} report={report} />
+      <WrittenSummary state={report} />
 
       <div className="grid gap-4 md:grid-cols-[220px_1fr]">
         <section className="rounded-md border border-line bg-panel p-4">
@@ -52,9 +55,9 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
 
 type ReportState = { status: "loading" } | { status: "done"; report: AiReport } | { status: "failed"; error: string };
 
-// Plain-English report written by the AI from the audit results. Loads after the
-// dashboard is already on screen; if it fails, the rule-based Top reasons still show.
-function WrittenSummary({ info }: { info: AuditBasicInfo }) {
+// Custom hook: asks /api/report for the AI-written report once the dashboard is on
+// screen. A custom hook is just a function starting with "use" that uses other hooks.
+function useAiReport(info: AuditBasicInfo): ReportState {
   const [state, setState] = useState<ReportState>({ status: "loading" });
 
   useEffect(() => {
@@ -75,6 +78,11 @@ function WrittenSummary({ info }: { info: AuditBasicInfo }) {
     return () => controller.abort();
   }, [info]);
 
+  return state;
+}
+
+// Plain-English report written by the AI. If it fails, the rule-based Top reasons still show.
+function WrittenSummary({ state }: { state: ReportState }) {
   if (state.status === "failed") {
     return <p className="text-[11px] text-muted">Written summary unavailable ({state.error}) The top reasons below are still accurate.</p>;
   }
@@ -123,7 +131,7 @@ function SiteTypeBanner({ info }: { info: AuditBasicInfo }) {
   );
 }
 
-function SummaryBar({ info }: { info: AuditBasicInfo }) {
+function SummaryBar({ info, report }: { info: AuditBasicInfo; report: ReportState }) {
   const host = new URL(info.finalUrl).hostname.replace(/^www\./, "");
   const facts = [
     `${info.pagesCrawled} page${info.pagesCrawled === 1 ? "" : "s"} checked`,
@@ -132,11 +140,62 @@ function SummaryBar({ info }: { info: AuditBasicInfo }) {
     `${(info.bytes / 1024).toFixed(0)} KB HTML`,
   ];
   return (
-    <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-line pb-2">
-      <h2 className="text-base font-semibold text-ink">
-        Audit: <span className="break-all">{host}</span>
-      </h2>
-      <p className="text-[11px] text-muted">{facts.join(" · ")}</p>
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-line pb-2">
+      <div>
+        <h2 className="text-base font-semibold text-ink">
+          Audit: <span className="break-all">{host}</span>
+        </h2>
+        <p className="text-[11px] text-muted">{facts.join(" · ")}</p>
+      </div>
+      <DownloadPdfButton info={info} report={report} />
+    </div>
+  );
+}
+
+// Builds the PDF in the browser. The PDF library is only downloaded when the
+// button is clicked, thanks to dynamic import(), so the page stays light.
+function DownloadPdfButton({ info, report }: { info: AuditBasicInfo; report: ReportState }) {
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const waitingForReport = report.status === "loading";
+
+  async function download() {
+    setBusy(true);
+    setFailed(false);
+    try {
+      const [{ pdf }, { default: AuditPdf }, { buildPdfData }] = await Promise.all([
+        import("@react-pdf/renderer"),
+        import("@/components/pdf/AuditPdf"),
+        import("@/lib/pdfData"),
+      ]);
+      const data = buildPdfData(info, report.status === "done" ? report.report : null);
+      const blob = await pdf(<AuditPdf data={data} />).toBlob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.fileName;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      console.error(err);
+      setFailed(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      {failed && <span className="text-[11px] text-error">Couldn&apos;t create the PDF. Try again.</span>}
+      <button
+        type="button"
+        onClick={download}
+        disabled={busy || waitingForReport}
+        title={waitingForReport ? "Waiting for the written summary…" : undefined}
+        className="h-8 rounded border border-line bg-panel px-3 text-xs font-semibold text-ink transition-colors hover:border-brand hover:text-brand disabled:cursor-wait disabled:opacity-60"
+      >
+        {busy ? "Preparing PDF…" : waitingForReport ? "Preparing summary…" : "Download PDF"}
+      </button>
     </div>
   );
 }
