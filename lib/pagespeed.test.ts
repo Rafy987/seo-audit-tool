@@ -59,7 +59,16 @@ describe("measureSpeed (fetch mocked, no network)", () => {
   it("never throws: both failing gives an error message", async () => {
     vi.stubGlobal("fetch", vi.fn(() => reply({ error: { code: 429, message: "Quota exceeded" } }, 429)));
     const r = await measureSpeed("https://abcflooring.com/", undefined);
-    expect(r).toEqual({ mobile: null, desktop: null, error: "Google's free speed-test limit was reached. Try again later." });
+    const msg = "Google's free speed-test limit was reached. Try again later.";
+    expect(r).toEqual({ mobile: null, desktop: null, error: msg, failed: { mobile: msg, desktop: msg } });
+  });
+  it("keeps the reason when only one test fails", async () => {
+    vi.stubGlobal("fetch", vi.fn((url: string) => (url.includes("strategy=mobile") ? reply({ error: { code: 500, message: "boom" } }, 500) : reply(lab(0.7, 1500, 0.01)))));
+    const r = await measureSpeed("https://abcflooring.com/", "k");
+    expect(r.mobile).toBeNull();
+    expect(r.desktop?.score).toBe(70);
+    expect(r.failed).toEqual({ mobile: "Google's speed test failed." });
+    expect(buildSpeedChecks(r)[0].message).toContain("Google's speed test failed.");
   });
 });
 

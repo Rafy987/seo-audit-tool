@@ -18,7 +18,8 @@ export type PsiMetrics = {
 export type SpeedResult = {
   mobile: PsiMetrics | null;
   desktop: PsiMetrics | null;
-  error?: string; // why speed couldn't be measured (shown to the user)
+  error?: string; // why speed couldn't be measured at all (shown to the user)
+  failed?: Partial<Record<Strategy, string>>; // why one test failed, e.g. { mobile: "took too long" }
 };
 
 export class PsiError extends Error {}
@@ -71,7 +72,8 @@ function friendlyError(code: number | null, message: string): string {
 }
 
 const API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
-const TIMEOUT_MS = 40_000; // PSI often takes 15-30 s
+// PSI often takes 15-30 s, mobile sometimes 40+ s. Homepage (≤10 s) + 45 s stays under the route's 60 s.
+const TIMEOUT_MS = 45_000;
 
 export async function fetchPsi(url: string, strategy: Strategy, apiKey?: string): Promise<PsiMetrics> {
   const params = new URLSearchParams({ url, strategy, category: "performance" });
@@ -97,10 +99,14 @@ export async function fetchPsi(url: string, strategy: Strategy, apiKey?: string)
 export async function measureSpeed(url: string, apiKey = process.env.PAGESPEED_API_KEY): Promise<SpeedResult> {
   const [mobile, desktop] = await Promise.allSettled([fetchPsi(url, "mobile", apiKey), fetchPsi(url, "desktop", apiKey)]);
   const value = (r: PromiseSettledResult<PsiMetrics>) => (r.status === "fulfilled" ? r.value : null);
-  const firstError = [mobile, desktop].find((r) => r.status === "rejected") as PromiseRejectedResult | undefined;
+  const reason = (r: PromiseSettledResult<PsiMetrics>) =>
+    r.status === "rejected" ? (r.reason instanceof PsiError ? r.reason.message : "Google's speed test failed.") : undefined;
+
   const result: SpeedResult = { mobile: value(mobile), desktop: value(desktop) };
-  if (!result.mobile && !result.desktop) {
-    result.error = firstError?.reason instanceof PsiError ? firstError.reason.message : "Google's speed test failed.";
-  }
+  const failed: Partial<Record<Strategy, string>> = {};
+  if (reason(mobile)) failed.mobile = reason(mobile);
+  if (reason(desktop)) failed.desktop = reason(desktop);
+  if (Object.keys(failed).length) result.failed = failed;
+  if (!result.mobile && !result.desktop) result.error = failed.mobile ?? failed.desktop;
   return result;
 }

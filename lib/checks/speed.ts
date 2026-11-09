@@ -32,11 +32,12 @@ const TITLES: Record<(typeof IDS)[number], string> = {
 };
 const WEIGHTS: Record<(typeof IDS)[number], number> = { "speed-mobile": 10, "speed-desktop": 4, lcp: 8, cls: 5, inp: 4 };
 
-function scoreCheck(m: PsiMetrics | null, id: "speed-mobile" | "speed-desktop"): CheckResult {
+function scoreCheck(m: PsiMetrics | null, id: "speed-mobile" | "speed-desktop", failReason?: string): CheckResult {
   const device = id === "speed-mobile" ? "phones" : "computers";
   const base = { id, title: TITLES[id], weight: WEIGHTS[id] };
   if (!m || m.score === null) {
-    return result({ ...base, status: "na", message: `The ${id === "speed-mobile" ? "mobile" : "desktop"} speed test didn't return a score this time.` });
+    const why = failReason ? ` ${failReason}` : "";
+    return result({ ...base, status: "na", message: `The ${id === "speed-mobile" ? "mobile" : "desktop"} speed test didn't return a score this time.${why}` });
   }
   const status = higherIsBetter(m.score, LIMITS.score);
   const value = `${m.score}/100`;
@@ -60,7 +61,10 @@ export function buildSpeedChecks(speed: SpeedResult | null): CheckResult[] {
   // Core Web Vitals: use mobile numbers (what Google ranks on), else desktop.
   const m = speed.mobile ?? speed.desktop!;
   const device = m.strategy === "mobile" ? "a phone" : "a computer";
-  const checks: CheckResult[] = [scoreCheck(speed.mobile, "speed-mobile"), scoreCheck(speed.desktop, "speed-desktop")];
+  const checks: CheckResult[] = [
+    scoreCheck(speed.mobile, "speed-mobile", speed.failed?.mobile),
+    scoreCheck(speed.desktop, "speed-desktop", speed.failed?.desktop),
+  ];
 
   // LCP
   {

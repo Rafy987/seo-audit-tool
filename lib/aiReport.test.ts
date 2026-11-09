@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMessages, buildReportFacts, generateReport, parseReport, ReportError, sanitizeReportInput, type ReportInput } from "./aiReport";
+import { buildMessages, buildReportFacts, generateReport, parseReport, plainEnglish, ReportError, reviewReport, sanitizeReportInput, type ReportInput } from "./aiReport";
 import type { CheckResult } from "./checks/types";
 
 const check = (id: string, status: CheckResult["status"], extra: Partial<CheckResult> = {}): CheckResult => ({
@@ -68,6 +68,44 @@ describe("parseReport", () => {
   });
 });
 
+describe("reviewReport", () => {
+  const facts = JSON.stringify(buildReportFacts(input));
+  const r = (summary: string, detail = "Fix it.") => ({ summary, fixes: [{ title: "Do this", detail }] });
+
+  it("passes a clean report that only uses numbers from the facts", () => {
+    expect(reviewReport(r("Your site is losing leads because your phone isn't tappable.", "Mobile speed is 44 out of 100; aim for 90."), facts)).toEqual([]);
+  });
+  it("flags jargon and made-up numbers (the bugs seen in the first live test)", () => {
+    const problems = reviewReport(r("Your site is losing leads because LCP is slow. Minify CSS.", "Raise the speed score above 80."), facts);
+    expect(problems[0]).toContain("LCP");
+    expect(problems[0]).toContain("minify");
+    expect(problems[1]).toContain("80");
+  });
+  it("flags a fix for something that already passed (live bug: 'Add tap-to-call' when the phone was tappable)", () => {
+    const okPhone = { ...input, checks: [...input.checks.filter((c) => c.id !== "click-to-call"), check("click-to-call", "passed", { title: "Click-to-call phone link" })] };
+    const f = JSON.stringify(buildReportFacts(okPhone));
+    const problems = reviewReport(r("Your site is losing leads because the phone number isn't easy to call.", "Add a tap-to-call button."), f);
+    expect(problems.join(" ")).toContain("already work on the site");
+    // ...but it's fine to mention the phone when click-to-call is actually failing
+    expect(reviewReport(r("Your site is losing leads because the phone isn't tappable.", "Add tap-to-call."), facts)).toEqual([]);
+  });
+  it("checks the opening sentence matches the site type", () => {
+    const shopFacts = JSON.stringify(buildReportFacts({ ...input, siteType: "ecommerce" }));
+    expect(reviewReport(r("Your site is losing leads because the phone is hidden."), shopFacts)[0]).toContain("could be getting more customers");
+    expect(reviewReport(r("Your site could be getting more customers because the phone is hidden."), shopFacts)).toEqual([]);
+  });
+});
+
+describe("plainEnglish", () => {
+  it("swaps the jargon seen in live reports for plain words", () => {
+    expect(plainEnglish("Add telephone to schema and alt text to all images.")).toBe("Add telephone to business details code and photo descriptions to all images.");
+    expect(plainEnglish("Include it in the LocalBusiness structured data.")).toBe("Include it in the business details code.");
+    expect(plainEnglish("Add telephone to business schema.")).toBe("Add telephone to business details code.");
+    expect(plainEnglish("Add telephone to business business details code.")).toBe("Add telephone to business details code.");
+    expect(plainEnglish("Add an H1 heading. Optimizing scripts helps LCP.")).toBe("Add a main heading. Improving scripts helps loading time.");
+  });
+});
+
 describe("sanitizeReportInput", () => {
   it("keeps known fields and cuts long text", () => {
     const r = sanitizeReportInput({ ...input, checks: [{ ...input.checks[0], message: "y".repeat(5000), extra: "dropped" }] });
@@ -101,6 +139,17 @@ describe("generateReport (fetch mocked, no network)", () => {
     expect(body.response_format).toEqual({ type: "json_object" });
     expect(body.max_completion_tokens).toBeGreaterThan(0);
     expect(body.messages[0].role).toBe("system");
+  });
+  it("asks for one rewrite when the report uses jargon", async () => {
+    const bad = JSON.stringify({ summary: "Your site is losing leads because LCP is slow.", fixes: [{ title: "Fix LCP", detail: "Minify scripts." }] });
+    const good = JSON.stringify({ summary: "Your site is losing leads because it shows up slowly on phones.", fixes: [{ title: "Shrink big photos", detail: "Smaller photos load faster." }] });
+    const fetchMock = vi.fn().mockReturnValueOnce(groqReply(bad)).mockReturnValueOnce(groqReply(good));
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await generateReport(input, "k");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(r.fixes[0].title).toBe("Shrink big photos");
+    const retryBody = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(retryBody.messages.at(-1).content).toContain("Don't use these words");
   });
   it("fails cleanly without a key, or on rate limit", async () => {
     await expect(generateReport(input, undefined)).rejects.toThrow(/isn't set up/);
