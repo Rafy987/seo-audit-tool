@@ -1,7 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AuditBasicInfo } from "@/app/api/audit/route";
+import type { ReportResponse } from "@/app/api/report/route";
+import type { AiReport } from "@/lib/aiReport";
 import type { CheckResult, CheckStatus } from "@/lib/checks/types";
 import { CATEGORY_LABELS, computeScores, countStatuses, rankIssues, scoreBand, topReasons, type CategoryScore, type RankedIssue } from "@/lib/score";
 import type { PsiMetrics, SpeedResult } from "@/lib/pagespeed";
@@ -27,6 +29,7 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
     <div className="mt-6 space-y-4">
       <SiteTypeBanner info={info} />
       <SummaryBar info={info} />
+      <WrittenSummary info={info} />
 
       <div className="grid gap-4 md:grid-cols-[220px_1fr]">
         <section className="rounded-md border border-line bg-panel p-4">
@@ -46,6 +49,64 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
 }
 
 /* ---------- Pieces ---------- */
+
+type ReportState = { status: "loading" } | { status: "done"; report: AiReport } | { status: "failed"; error: string };
+
+// Plain-English report written by the AI from the audit results. Loads after the
+// dashboard is already on screen; if it fails, the rule-based Top reasons still show.
+function WrittenSummary({ info }: { info: AuditBasicInfo }) {
+  const [state, setState] = useState<ReportState>({ status: "loading" });
+
+  useEffect(() => {
+    // No reset needed here: a new audit unmounts this dashboard, so state starts at "loading".
+    const controller = new AbortController();
+    fetch("/api/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ site: info.finalUrl, siteType: info.siteType, checks: info.checks, speed: info.speed }),
+      signal: controller.signal,
+    })
+      .then((res) => res.json() as Promise<ReportResponse>)
+      .then((data) => setState("report" in data ? { status: "done", report: data.report } : { status: "failed", error: data.error }))
+      .catch(() => {
+        if (!controller.signal.aborted) setState({ status: "failed", error: "The written report isn't available right now." });
+      });
+    // Cleanup: cancel the request if a new audit starts before this one finishes.
+    return () => controller.abort();
+  }, [info]);
+
+  if (state.status === "failed") {
+    return <p className="text-[11px] text-muted">Written summary unavailable ({state.error}) The top reasons below are still accurate.</p>;
+  }
+
+  return (
+    <section className="rounded-md border border-line bg-panel" aria-busy={state.status === "loading"}>
+      <h3 className="border-b border-line px-4 py-2.5 text-xs font-semibold text-ink">Summary</h3>
+      {state.status === "loading" ? (
+        <div className="space-y-2 px-4 py-4" role="status">
+          <p className="text-xs text-muted">Writing your report…</p>
+          <div className="h-2.5 w-11/12 animate-pulse rounded bg-page" />
+          <div className="h-2.5 w-3/4 animate-pulse rounded bg-page" />
+        </div>
+      ) : (
+        <div className="px-4 py-3">
+          <p className="text-sm leading-relaxed text-ink">{state.report.summary}</p>
+          <h4 className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-muted">What to fix first</h4>
+          <ol className="mt-1.5 space-y-2">
+            {state.report.fixes.map((f, i) => (
+              <li key={i} className="flex gap-2.5 text-xs">
+                <span className="mt-px w-4 shrink-0 text-right font-semibold tabular-nums text-brand">{i + 1}.</span>
+                <span>
+                  <span className="font-semibold text-ink">{f.title}.</span> <span className="text-muted">{f.detail}</span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+    </section>
+  );
+}
 
 function SiteTypeBanner({ info }: { info: AuditBasicInfo }) {
   if (info.siteType === "contractor") return null;
