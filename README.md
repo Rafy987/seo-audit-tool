@@ -2,7 +2,7 @@
 
 LeadLeak checks a contractor's website (roofers, flooring installers, plumbers, HVAC, remodelers) and explains **why the site is losing calls and quote requests**: a 0–100 Health Score, a prioritized list of issues, and a plain-English written report you can download as a PDF.
 
-**Live demo:** _link added after deployment_ · **Sample report:** [docs/sample-report.pdf](docs/sample-report.pdf)
+**Live demo:** [seo-audit-tool-liard.vercel.app](https://seo-audit-tool-liard.vercel.app) · **Sample report:** [docs/sample-report.pdf](docs/sample-report.pdf)
 
 ![LeadLeak dashboard on desktop](docs/screenshots/dashboard-desktop.png)
 
