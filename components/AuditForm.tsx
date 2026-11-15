@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { normalizeUrl } from "@/lib/url";
 import type { AuditBasicInfo } from "@/app/api/audit/route";
-import AuditDashboard from "./dashboard/AuditDashboard";
+import { getCachedAudit } from "@/lib/auditCache";
+import AuditDashboard, { type CachedResult } from "./dashboard/AuditDashboard";
+import AuditSteps from "./dashboard/AuditSteps";
+
+type Result = { run: number; info: AuditBasicInfo; cached: CachedResult | null };
 
 // The URL form + the results. `children` is shown until the first result arrives
 // (the homepage passes the "What the audit checks" boxes in here).
@@ -11,12 +15,11 @@ export default function AuditForm({ children }: { children?: React.ReactNode }) 
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AuditBasicInfo | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
+  const [runs, setRuns] = useState(0); // a new number per audit, so the dashboard starts fresh (key prop)
 
-  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const check = normalizeUrl(value);
-
+  async function runAudit(input: string, fresh: boolean) {
+    const check = normalizeUrl(input);
     if (!check.ok) {
       setError(check.error);
       setResult(null);
@@ -24,27 +27,48 @@ export default function AuditForm({ children }: { children?: React.ReactNode }) 
     }
 
     setError(null);
-    setResult(null);
     setValue(check.url);
-    setLoading(true);
+    const run = runs + 1;
+    setRuns(run);
 
+    // Same site in the last 24 hours? Show the saved result (no API calls).
+    if (!fresh) {
+      let hit = null;
+      try {
+        hit = getCachedAudit(window.localStorage, check.url);
+      } catch {
+        // storage blocked: just run a new audit
+      }
+      if (hit) {
+        setResult({ run, info: hit.info, cached: { savedAt: hit.savedAt, report: hit.report } });
+        return;
+      }
+    }
+
+    setResult(null);
+    setLoading(true);
     try {
       const res = await fetch("/api/audit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: check.url }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(data.error ?? "Something went wrong. Try again.");
+        setError(typeof data.error === "string" ? data.error : "Something went wrong. Try again.");
       } else {
-        setResult(data as AuditBasicInfo);
+        setResult({ run, info: data as AuditBasicInfo, cached: null });
       }
     } catch {
       setError("Couldn't reach the server. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    void runAudit(value, false);
   }
 
   return (
@@ -79,21 +103,36 @@ export default function AuditForm({ children }: { children?: React.ReactNode }) 
             </button>
           </div>
 
-          {loading && (
-            <p className="mt-2 text-xs text-muted" role="status">
-              Fetching the homepage and checking up to 20 pages. This can take up to 30 seconds.
-            </p>
-          )}
-
           {error && (
-            <p id="site-url-error" role="alert" className="mt-2 rounded border border-error/30 bg-error-soft px-3 py-2 text-xs text-error">
-              {error}
-            </p>
+            <div id="site-url-error" role="alert" className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 rounded border border-error/30 bg-error-soft px-3 py-2 text-xs text-error">
+              <span>{error}</span>
+              {value && (
+                <button type="button" onClick={() => void runAudit(value, true)} className="font-semibold underline">
+                  Try again
+                </button>
+              )}
+            </div>
           )}
         </form>
       </section>
 
-      {result ? <AuditDashboard info={result} /> : !loading && children}
+      {loading && (
+        <div className="mt-4">
+          <AuditSteps
+            steps={[
+              { label: "Site scan", state: "active", note: "Homepage + up to 20 pages, about 10-30 s" },
+              { label: "Speed test (Google)", state: "waiting" },
+              { label: "Written report", state: "waiting" },
+            ]}
+          />
+        </div>
+      )}
+
+      {result ? (
+        <AuditDashboard key={result.run} info={result.info} cached={result.cached} onRunFresh={() => void runAudit(result.info.finalUrl, true)} />
+      ) : (
+        !loading && children
+      )}
     </div>
   );
 }

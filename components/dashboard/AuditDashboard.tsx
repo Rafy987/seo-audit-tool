@@ -2,19 +2,71 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { AuditBasicInfo } from "@/app/api/audit/route";
-import type { ReportResponse } from "@/app/api/report/route";
 import type { AiReport } from "@/lib/aiReport";
+import { ageText, saveCachedAudit } from "@/lib/auditCache";
+import { applySiteType } from "@/lib/checks/applicability";
+import AuditSteps, { type Step } from "./AuditSteps";
+import { usePost } from "./usePost";
 import { SPEED_NOTE } from "@/lib/pdfData";
 import type { CheckResult, CheckStatus } from "@/lib/checks/types";
 import { CATEGORY_LABELS, computeScores, countStatuses, rankIssues, scoreBand, topReasons, type CategoryScore, type RankedIssue } from "@/lib/score";
 import type { PsiMetrics, SpeedResult } from "@/lib/pagespeed";
-import { higherIsBetter, LIMITS, lowerIsBetter } from "@/lib/checks/speed";
+import { buildSpeedChecks, higherIsBetter, LIMITS, lowerIsBetter } from "@/lib/checks/speed";
 import HealthRing from "./HealthRing";
 import { BAND_BAR, BAND_TEXT, STATUS } from "./status";
 
 type Filter = "all" | "error" | "warning" | "notice";
 
-export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
+export type CachedResult = { savedAt: number; report: AiReport | null };
+
+// Flow: the audit is shown right away -> /api/speed runs -> scores update ->
+// /api/report writes the summary. Everything is saved in the browser cache at the end.
+export default function AuditDashboard({
+  info: audit,
+  cached = null,
+  onRunFresh,
+}: {
+  info: AuditBasicInfo;
+  cached?: CachedResult | null;
+  onRunFresh: () => void;
+}) {
+  // 1. Speed test (skipped when the result already has speed, e.g. from the cache).
+  const speedReq = usePost<SpeedResult>("/api/speed", audit.speed ? null : { url: audit.finalUrl });
+  const speedState = speedReq.state;
+  const speed = useMemo<SpeedResult | null>(() => {
+    if (audit.speed) return audit.speed;
+    if (speedState.status === "done") return speedState.data;
+    if (speedState.status === "failed") return { mobile: null, desktop: null, error: speedState.error };
+    return null;
+  }, [audit.speed, speedState]);
+
+  // 2. The full result = audit + speed checks (N/A if the test failed).
+  const info: AuditBasicInfo = useMemo(() => {
+    if (audit.speed || !speed) return audit;
+    return { ...audit, speed, checks: [...audit.checks, ...applySiteType(buildSpeedChecks(speed), audit.siteType)] };
+  }, [audit, speed]);
+
+  // 3. Written report, once speed is settled (so it can talk about speed too).
+  const cachedReport = useMemo(() => (cached?.report ? { report: cached.report } : null), [cached]);
+  const reportReq = usePost<{ report: AiReport }>(
+    "/api/report",
+    info.speed ? { site: info.finalUrl, siteType: info.siteType, checks: info.checks, speed: info.speed } : null,
+    cachedReport,
+  );
+  const reportState = reportReq.state;
+  const report = useMemo<ReportState>(() => {
+    if (reportState.status === "done") return { status: "done", report: reportState.data.report };
+    if (reportState.status === "failed") return { status: "failed", error: reportState.error };
+    return { status: "loading" };
+  }, [reportState]);
+
+  // 4. Save to the browser cache when everything is settled (not for cached results).
+  const settled = info.speed !== null && report.status !== "loading";
+  useEffect(() => {
+    if (!settled || cached) return;
+    saveCachedAudit(window.localStorage, info, report.status === "done" ? report.report : null);
+  }, [settled, cached, info, report]);
+
   // useMemo: recompute only when the result changes, not on every filter click.
   const { scores, counts, issues, reasons } = useMemo(
     () => ({
@@ -26,25 +78,43 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
     [info.checks],
   );
 
-  // The AI report lives here so both the Summary panel and the PDF use it.
-  const report = useAiReport(info);
+  const speedRunning = speedReq.state.status === "loading";
+  const speedFailed = !!info.speed && !info.speed.mobile && !info.speed.desktop;
+  const steps: Step[] = [
+    { label: "Site scan", state: "done", note: `${info.pagesCrawled} page${info.pagesCrawled === 1 ? "" : "s"} checked` },
+    {
+      label: "Speed test (Google)",
+      state: speedRunning ? "active" : speedFailed ? "failed" : "done",
+      note: speedRunning ? "Running, can take up to a minute" : speedFailed ? "Couldn't measure speed" : undefined,
+      onRetry: speedFailed && !audit.speed ? speedReq.retry : undefined,
+    },
+    {
+      label: "Written report",
+      state: report.status === "loading" ? (info.speed ? "active" : "waiting") : report.status === "failed" ? "failed" : "done",
+      note: report.status === "loading" && !info.speed ? "Starts after the speed test" : report.status === "failed" ? "Not available" : undefined,
+      onRetry: report.status === "failed" ? reportReq.retry : undefined,
+    },
+  ];
 
   return (
     <div className="mt-6 space-y-4">
+      {cached && <CachedBanner savedAt={cached.savedAt} onRunFresh={onRunFresh} />}
+      {!settled && <AuditSteps steps={steps} />}
       <SiteTypeBanner info={info} />
-      <SummaryBar info={info} report={report} />
-      <WrittenSummary state={report} />
+      <SummaryBar info={info} report={report} ready={settled} />
+      <WrittenSummary state={report} waitingForSpeed={!info.speed} onRetry={reportReq.retry} />
 
       <div className="grid gap-4 md:grid-cols-[220px_1fr]">
         <section className="rounded-md border border-line bg-panel p-4">
           <HealthRing score={scores.overall} />
+          {!info.speed && <p className="mt-2 text-center text-[11px] text-muted">Updates when the speed test finishes</p>}
           <StatusCounts counts={counts} />
         </section>
         <TopReasons reasons={reasons} />
       </div>
 
       <CategoryCards categories={scores.categories} />
-      <SpeedPanel speed={info.speed} />
+      <SpeedPanel speed={info.speed} onRetry={speedFailed && !audit.speed ? speedReq.retry : undefined} />
       <IssuesList issues={issues} />
       <CollapsedList title="Passed checks" checks={info.checks.filter((c) => c.status === "passed")} />
       <CollapsedList title="Not applicable" checks={info.checks.filter((c) => c.status === "na")} />
@@ -56,36 +126,30 @@ export default function AuditDashboard({ info }: { info: AuditBasicInfo }) {
 
 type ReportState = { status: "loading" } | { status: "done"; report: AiReport } | { status: "failed"; error: string };
 
-// Custom hook: asks /api/report for the AI-written report once the dashboard is on
-// screen. A custom hook is just a function starting with "use" that uses other hooks.
-function useAiReport(info: AuditBasicInfo): ReportState {
-  const [state, setState] = useState<ReportState>({ status: "loading" });
-
-  useEffect(() => {
-    // No reset needed here: a new audit unmounts this dashboard, so state starts at "loading".
-    const controller = new AbortController();
-    fetch("/api/report", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ site: info.finalUrl, siteType: info.siteType, checks: info.checks, speed: info.speed }),
-      signal: controller.signal,
-    })
-      .then((res) => res.json() as Promise<ReportResponse>)
-      .then((data) => setState("report" in data ? { status: "done", report: data.report } : { status: "failed", error: data.error }))
-      .catch(() => {
-        if (!controller.signal.aborted) setState({ status: "failed", error: "The written report isn't available right now." });
-      });
-    // Cleanup: cancel the request if a new audit starts before this one finishes.
-    return () => controller.abort();
-  }, [info]);
-
-  return state;
+function CachedBanner({ savedAt, onRunFresh }: { savedAt: number; onRunFresh: () => void }) {
+  return (
+    <div role="note" className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-line bg-panel px-4 py-2.5 text-xs">
+      <span className="text-muted">
+        Showing the audit from <span className="font-semibold text-ink">{ageText(savedAt)}</span> (saved in this browser).
+      </span>
+      <button type="button" onClick={onRunFresh} className="font-semibold text-brand hover:underline">
+        Run fresh audit
+      </button>
+    </div>
+  );
 }
 
 // Plain-English report written by the AI. If it fails, the rule-based Top reasons still show.
-function WrittenSummary({ state }: { state: ReportState }) {
+function WrittenSummary({ state, waitingForSpeed, onRetry }: { state: ReportState; waitingForSpeed: boolean; onRetry: () => void }) {
   if (state.status === "failed") {
-    return <p className="text-[11px] text-muted">Written summary unavailable ({state.error}) The top reasons below are still accurate.</p>;
+    return (
+      <p className="text-[11px] text-muted">
+        Written summary unavailable ({state.error}) The top reasons below are still accurate.{" "}
+        <button type="button" onClick={onRetry} className="font-semibold text-brand hover:underline">
+          Try again
+        </button>
+      </p>
+    );
   }
 
   return (
@@ -93,7 +157,7 @@ function WrittenSummary({ state }: { state: ReportState }) {
       <h3 className="border-b border-line px-4 py-2.5 text-xs font-semibold text-ink">Summary</h3>
       {state.status === "loading" ? (
         <div className="space-y-2 px-4 py-4" role="status">
-          <p className="text-xs text-muted">Writing your report…</p>
+          <p className="text-xs text-muted">{waitingForSpeed ? "Your written report starts after the speed test." : "Writing your report…"}</p>
           <div className="h-2.5 w-11/12 animate-pulse rounded bg-page" />
           <div className="h-2.5 w-3/4 animate-pulse rounded bg-page" />
         </div>
@@ -132,7 +196,7 @@ function SiteTypeBanner({ info }: { info: AuditBasicInfo }) {
   );
 }
 
-function SummaryBar({ info, report }: { info: AuditBasicInfo; report: ReportState }) {
+function SummaryBar({ info, report, ready }: { info: AuditBasicInfo; report: ReportState; ready: boolean }) {
   const host = new URL(info.finalUrl).hostname.replace(/^www\./, "");
   const facts = [
     `${info.pagesCrawled} page${info.pagesCrawled === 1 ? "" : "s"} checked`,
@@ -148,17 +212,17 @@ function SummaryBar({ info, report }: { info: AuditBasicInfo; report: ReportStat
         </h2>
         <p className="text-[11px] text-muted">{facts.join(" · ")}</p>
       </div>
-      <DownloadPdfButton info={info} report={report} />
+      <DownloadPdfButton info={info} report={report} ready={ready} />
     </div>
   );
 }
 
 // Builds the PDF in the browser. The PDF library is only downloaded when the
 // button is clicked, thanks to dynamic import(), so the page stays light.
-function DownloadPdfButton({ info, report }: { info: AuditBasicInfo; report: ReportState }) {
+function DownloadPdfButton({ info, report, ready }: { info: AuditBasicInfo; report: ReportState; ready: boolean }) {
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  const waitingForReport = report.status === "loading";
+  const waitingForReport = !ready; // wait for speed + written summary so the PDF is complete
 
   async function download() {
     setBusy(true);
@@ -192,10 +256,10 @@ function DownloadPdfButton({ info, report }: { info: AuditBasicInfo; report: Rep
         type="button"
         onClick={download}
         disabled={busy || waitingForReport}
-        title={waitingForReport ? "Waiting for the written summary…" : undefined}
+        title={waitingForReport ? "Waiting for the speed test and written summary…" : undefined}
         className="h-8 rounded border border-line bg-panel px-3 text-xs font-semibold text-ink transition-colors hover:border-brand hover:text-brand disabled:cursor-wait disabled:opacity-60"
       >
-        {busy ? "Preparing PDF…" : waitingForReport ? "Preparing summary…" : "Download PDF"}
+        {busy ? "Preparing PDF…" : waitingForReport ? "Finishing audit…" : "Download PDF"}
       </button>
     </div>
   );
@@ -281,12 +345,25 @@ function CategoryCards({ categories }: { categories: CategoryScore[] }) {
 }
 
 // Mobile + desktop speed side by side, with Core Web Vitals for each.
-function SpeedPanel({ speed }: { speed: SpeedResult }) {
+function SpeedPanel({ speed, onRetry }: { speed: SpeedResult | null; onRetry?: () => void }) {
+  if (!speed) {
+    return (
+      <section className="rounded-md border border-line bg-panel px-4 py-3 text-xs" role="status" aria-busy>
+        <span className="font-semibold text-ink">Testing speed with Google…</span>{" "}
+        <span className="text-muted">This usually takes 20–60 seconds. The score updates when it&apos;s done.</span>
+      </section>
+    );
+  }
   if (!speed.mobile && !speed.desktop) {
     return (
       <section className="rounded-md border border-line bg-panel px-4 py-3 text-xs">
         <span className="font-semibold text-ink">Speed couldn&apos;t be measured this time.</span>{" "}
         <span className="text-muted">{speed.error} Speed checks are left out of the score.</span>
+        {onRetry && (
+          <button type="button" onClick={onRetry} className="ml-2 font-semibold text-brand hover:underline">
+            Retry speed test
+          </button>
+        )}
       </section>
     );
   }

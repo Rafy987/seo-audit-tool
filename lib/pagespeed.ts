@@ -72,8 +72,8 @@ function friendlyError(code: number | null, message: string): string {
 }
 
 const API = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed";
-// PSI often takes 15-30 s, mobile sometimes 40+ s. Homepage (≤10 s) + 45 s stays under the route's 60 s.
-const TIMEOUT_MS = 45_000;
+// PSI often takes 15-30 s, mobile sometimes 40-50 s. It runs alone in /api/speed (60 s limit), so 55 s fits.
+const TIMEOUT_MS = 55_000;
 
 export async function fetchPsi(url: string, strategy: Strategy, apiKey?: string): Promise<PsiMetrics> {
   const params = new URLSearchParams({ url, strategy, category: "performance" });

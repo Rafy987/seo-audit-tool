@@ -6,12 +6,12 @@ import { runLocalSeoChecks } from "@/lib/checks/localSeo";
 import { runTrustChecks } from "@/lib/checks/trust";
 import { applySiteType } from "@/lib/checks/applicability";
 import { detectSiteType, type SiteType } from "@/lib/siteType";
-import { measureSpeed, type SpeedResult } from "@/lib/pagespeed";
-import { buildSpeedChecks } from "@/lib/checks/speed";
+import type { SpeedResult } from "@/lib/pagespeed";
 import { getPreparedBy, type PreparedBy } from "@/lib/preparedBy";
+import { clientIp, limits, tooMany } from "@/lib/rateLimit";
 import type { CheckResult } from "@/lib/checks/types";
 
-// Homepage (≤10 s) + crawl and speed test in parallel (≤40 s). Tells Vercel this route may run up to 60 s.
+// Homepage (≤10 s) + crawl (≤25 s). The speed test runs separately in /api/speed.
 export const maxDuration = 60;
 
 // Shape of the JSON this route returns (the form imports this type).
@@ -27,7 +27,7 @@ export type AuditBasicInfo = {
   sitemapFound: boolean;
   siteType: SiteType;
   siteTypeSignals: string[];
-  speed: SpeedResult;
+  speed: SpeedResult | null; // null until the dashboard gets it from /api/speed
   preparedBy: PreparedBy | null; // for the PDF, from .env.local
   checks: CheckResult[];
 };
@@ -43,13 +43,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "Enter the website address you want to audit." }, { status: 400 });
   }
 
+  const limit = limits.auditPerIp.check(clientIp(request.headers));
+  if (!limit.ok) return tooMany("audits", limit.retryAfterSec);
+
   try {
     const page = await fetchPage(url);
-    // Crawl (≤25 s) and Google's speed test (≤40 s) run at the same time.
-    const [crawl, speed] = await Promise.all([
-      crawlSite({ url: page.finalUrl, html: page.html }),
-      measureSpeed(page.finalUrl),
-    ]);
+    const crawl = await crawlSite({ url: page.finalUrl, html: page.html });
     const site = detectSiteType(crawl.pages);
 
     const checks = applySiteType(
@@ -58,7 +57,6 @@ export async function POST(request: Request) {
         ...runLocalSeoChecks(crawl),
         ...runTrustChecks(crawl),
         ...runOnPageChecks(page.html, page.finalUrl),
-        ...buildSpeedChecks(speed),
       ],
       site.type,
     );
@@ -74,7 +72,7 @@ export async function POST(request: Request) {
       sitemapFound: crawl.sitemapFound,
       siteType: site.type,
       siteTypeSignals: site.signals,
-      speed,
+      speed: null,
       preparedBy: getPreparedBy(),
       checks,
     };
@@ -83,7 +81,8 @@ export async function POST(request: Request) {
     if (err instanceof FetchPageError) {
       return Response.json({ error: err.message }, { status: err.status });
     }
-    console.error(err);
+    // Log a short line only (no request body, no keys).
+    console.error("audit route:", err instanceof Error ? `${err.name}: ${err.message}` : "unknown error");
     return Response.json({ error: "Something went wrong on our side. Try again." }, { status: 500 });
   }
 }

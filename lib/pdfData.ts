@@ -2,6 +2,7 @@ import type { AuditBasicInfo } from "@/app/api/audit/route";
 import type { AiReport } from "./aiReport";
 import type { CheckStatus } from "./checks/types";
 import type { PreparedBy } from "./preparedBy";
+import type { SpeedResult } from "./pagespeed";
 import { CATEGORY_LABELS, computeScores, countStatuses, rankIssues, scoreBand, topReasons } from "./score";
 
 // Everything the PDF shows, already formatted. Pure function (tested), so the
@@ -55,12 +56,14 @@ export function buildPdfData(info: AuditBasicInfo, report: AiReport | null, now 
     ? report.fixes.map((f) => ({ title: pdfText(f.title), detail: pdfText(f.detail) }))
     : topReasons(info.checks).map((r) => ({ title: pdfText(r.reason), detail: pdfText(r.message) }));
 
-  const m = info.speed.mobile ?? info.speed.desktop;
+  // speed is null if the PDF is made before the speed test finished (the button waits, but be safe).
+  const sp: SpeedResult = info.speed ?? { mobile: null, desktop: null };
+  const m = sp.mobile ?? sp.desktop;
   const speed =
-    info.speed.mobile || info.speed.desktop
+    sp.mobile || sp.desktop
       ? {
-          mobile: info.speed.mobile?.score ?? null,
-          desktop: info.speed.desktop?.score ?? null,
+          mobile: sp.mobile?.score ?? null,
+          desktop: sp.desktop?.score ?? null,
           rows: [
             { label: "Loading time (LCP)", value: m?.lcpMs != null ? `${(m.lcpMs / 1000).toFixed(1)} s` : "no data" },
             { label: "Layout shift (CLS)", value: m?.cls != null ? m.cls.toFixed(2) : "no data" },
@@ -96,7 +99,7 @@ export function buildPdfData(info: AuditBasicInfo, report: AiReport | null, now 
         impact: c.impact,
       })),
     speed,
-    speedNote: speed ? null : info.speed.error ? `Speed couldn't be measured: ${pdfText(info.speed.error)}` : "Speed couldn't be measured.",
+    speedNote: speed ? null : sp.error ? `Speed couldn't be measured: ${pdfText(sp.error)}` : "Speed couldn't be measured.",
     passed: info.checks.filter((c) => c.status === "passed").map((c) => pdfText(c.title)),
     pagesChecked: info.pagesCrawled,
     limits: [
