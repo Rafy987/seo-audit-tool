@@ -233,7 +233,12 @@ function DownloadPdfButton({ info, report, ready }: { info: AuditBasicInfo; repo
         import("@/components/pdf/AuditPdf"),
         import("@/lib/pdfData"),
       ]);
-      const data = buildPdfData(info, report.status === "done" ? report.report : null);
+      // Fresh "Prepared by" from the server (the audit itself may come from the browser cache).
+      const preparedBy = await fetch("/api/prepared-by")
+        .then((r) => r.json() as Promise<{ preparedBy: AuditBasicInfo["preparedBy"] }>)
+        .then((d) => d.preparedBy)
+        .catch(() => info.preparedBy);
+      const data = buildPdfData({ ...info, preparedBy }, report.status === "done" ? report.report : null);
       const blob = await pdf(<AuditPdf data={data} />).toBlob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");

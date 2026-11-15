@@ -14,4 +14,5 @@ export type CheckResult = {
   message: string; // plain-English explanation for a contractor
   weight: number; // importance, used for the score in Phase 7
   value?: string; // what we found (e.g. the title text), if useful
+  metric?: number; // a raw number behind the check, e.g. the PageSpeed score 0-100 (used for the Speed category score)
 };

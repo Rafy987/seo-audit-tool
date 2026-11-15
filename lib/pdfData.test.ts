@@ -93,9 +93,9 @@ describe("AuditPdf (smoke test)", () => {
 });
 
 describe("PDF extras from user feedback", () => {
-  it("adds 'mobile weighted more' next to the Speed score only", () => {
+  it("adds the 70% mobile / 30% desktop note next to the Speed score only", () => {
     const d = buildPdfData(info, report, NOW);
-    expect(d.categories.find((c) => c.label === "Speed")?.note).toBe("mobile weighted more");
+    expect(d.categories.find((c) => c.label === "Speed")?.note).toBe("70% mobile, 30% desktop score");
     expect(d.categories.filter((c) => c.note)).toHaveLength(1);
   });
   it("includes the Prepared by block only when set", () => {

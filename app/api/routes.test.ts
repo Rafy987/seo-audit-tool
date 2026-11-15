@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the slow / paid parts, so these tests run offline and instantly.
 vi.mock("@/lib/pagespeed", () => ({ measureSpeed: vi.fn() }));
+// connection() only works inside a real Next.js request.
+vi.mock("next/server", () => ({ connection: async () => {} }));
 vi.mock("@/lib/aiReport", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/lib/aiReport")>();
   return { ...real, generateReport: vi.fn() };
@@ -100,5 +102,20 @@ describe("/api/speed partial results", () => {
     await speedPOST(post({ url: "half-test.com" }, "3.3.3.1"));
     await speedPOST(post({ url: "half-test.com" }, "3.3.3.1"));
     expect(measureSpeed).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("/api/prepared-by", () => {
+  it("returns null when nothing is set, and the details when set", async () => {
+    const { GET } = await import("./prepared-by/route");
+    const before = { ...process.env };
+    delete process.env.PREPARED_BY_NAME;
+    delete process.env.PREPARED_BY_EMAIL;
+    delete process.env.PREPARED_BY_URL;
+    expect(await (await GET()).json()).toEqual({ preparedBy: null });
+    process.env.PREPARED_BY_NAME = "Abdul Rafy";
+    process.env.PREPARED_BY_EMAIL = "rafy@example.com";
+    expect(await (await GET()).json()).toEqual({ preparedBy: { name: "Abdul Rafy", email: "rafy@example.com" } });
+    process.env = before;
   });
 });

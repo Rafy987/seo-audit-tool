@@ -60,6 +60,19 @@ export type CategoryScore = {
 
 export type Scores = { overall: number | null; categories: CategoryScore[] };
 
+// The Speed category score is simply Google's speed scores mixed 70% mobile /
+// 30% desktop, so it matches the numbers clients see in PageSpeed Insights.
+// (Loading time, layout shift and tap response are still listed as issues.)
+export const SPEED_MIX = { mobile: 0.7, desktop: 0.3 };
+
+export function speedCategoryScore(speedChecks: CheckResult[]): number | null {
+  const metric = (id: string) => speedChecks.find((c) => c.id === id && c.status !== "na" && typeof c.metric === "number")?.metric;
+  const mobile = metric("speed-mobile");
+  const desktop = metric("speed-desktop");
+  if (mobile !== undefined && desktop !== undefined) return Math.round(mobile * SPEED_MIX.mobile + desktop * SPEED_MIX.desktop);
+  return mobile ?? desktop ?? null; // only one test worked: use that one
+}
+
 export function computeScores(checks: CheckResult[]): Scores {
   const order = Object.keys(CATEGORY_WEIGHTS) as CheckCategory[];
   const present = order.filter((cat) => checks.some((c) => c.category === cat));
@@ -70,7 +83,8 @@ export function computeScores(checks: CheckResult[]): Scores {
     // A category with only 1 scored check (the rest N/A) gets half its weight,
     // so one check can't swing the whole Health Score.
     const base = scoredCount === 0 ? 0 : CATEGORY_WEIGHTS[category] * (scoredCount < MIN_CHECKS_FOR_FULL_WEIGHT ? 0.5 : 1);
-    return { category, score: scoreChecks(list), counts: countStatuses(list), base };
+    const score = category === "speed" ? (speedCategoryScore(list) ?? scoreChecks(list)) : scoreChecks(list);
+    return { category, score, counts: countStatuses(list), base };
   });
 
   // Categories with nothing to score give their share to the others.
@@ -88,23 +102,25 @@ export function computeScores(checks: CheckResult[]): Scores {
 
 export type RankedIssue = CheckResult & { impact: number };
 
+const isIssue = (c: CheckResult) => c.status === "error" || c.status === "warning" || c.status === "notice";
+const lostWeight = (c: CheckResult) => c.weight * (1 - points(c));
+
 // Problems (errors, warnings, notices) sorted by how many points they cost the Health Score.
+// Each category loses (its share of the score) x (100 - its score). That loss is split
+// between its issues by how much weight each one lost, so the impacts add up exactly.
 export function rankIssues(checks: CheckResult[]): RankedIssue[] {
   const { categories } = computeScores(checks);
-  const catWeight = new Map(categories.map((c) => [c.category, c.weight]));
-  const catTotal = new Map(
-    categories.map((c) => [
-      c.category,
-      checks.filter((x) => x.category === c.category && scored(x)).reduce((s, x) => s + x.weight, 0),
-    ]),
+  const loss = new Map(categories.map((c) => [c.category, c.weight * (1 - (c.score ?? 100) / 100) * 100]));
+  const lostTotal = new Map(
+    categories.map((c) => [c.category, checks.filter((x) => x.category === c.category && isIssue(x)).reduce((s, x) => s + lostWeight(x), 0)]),
   );
 
   return checks
-    .filter((c) => c.status === "error" || c.status === "warning" || c.status === "notice")
+    .filter(isIssue)
     .map((c) => {
-      const share = (catWeight.get(c.category) ?? 0) * (c.weight / (catTotal.get(c.category) || 1));
+      const share = lostWeight(c) / (lostTotal.get(c.category) || 1);
       // Points lost on the 0-100 Health Score if this stays unfixed.
-      return { ...c, impact: Math.round(share * (1 - points(c)) * 1000) / 10 };
+      return { ...c, impact: Math.round((loss.get(c.category) ?? 0) * share * 10) / 10 };
     })
     .sort((a, b) => b.impact - a.impact);
 }

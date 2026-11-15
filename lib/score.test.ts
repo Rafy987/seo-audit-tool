@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CheckCategory, CheckResult, CheckStatus } from "./checks/types";
-import { computeScores, countStatuses, rankIssues, reasonFor, scoreBand, scoreChecks, topReasons } from "./score";
+import { computeScores, countStatuses, rankIssues, reasonFor, scoreBand, scoreChecks, speedCategoryScore, topReasons } from "./score";
 
 const c = (id: string, category: CheckCategory, status: CheckStatus, weight = 10): CheckResult => ({
   id,
@@ -134,5 +134,38 @@ describe("topReasons", () => {
 describe("scoreBand", () => {
   it("splits at 50 and 80", () => {
     expect([0, 49, 50, 79, 80, 100].map(scoreBand)).toEqual(["poor", "poor", "fair", "fair", "good", "good"]);
+  });
+});
+
+describe("Speed category score (user feedback: 24/100 was confusing)", () => {
+  const speedCheck = (id: string, status: CheckStatus, metric?: number, weight = 10): CheckResult => ({ ...c(id, "speed", status, weight), metric });
+
+  it("is 70% mobile + 30% desktop PageSpeed score, not the check points", () => {
+    const checks = [
+      speedCheck("speed-mobile", "error", 38),
+      speedCheck("speed-desktop", "warning", 64, 4),
+      speedCheck("lcp", "error", undefined, 8),
+      speedCheck("cls", "passed", undefined, 5),
+    ];
+    // 38*0.7 + 64*0.3 = 45.8 -> 46 (the old way gave 24)
+    expect(speedCategoryScore(checks)).toBe(46);
+    expect(computeScores(checks).categories[0].score).toBe(46);
+  });
+  it("uses the one score that worked if the other test failed", () => {
+    expect(speedCategoryScore([speedCheck("speed-mobile", "error", 44), speedCheck("speed-desktop", "na")])).toBe(44);
+  });
+  it("falls back to N/A when no speed test worked", () => {
+    expect(computeScores([speedCheck("speed-mobile", "na"), speedCheck("lcp", "na")]).categories[0].score).toBeNull();
+  });
+  it("issue impacts still add up to the points missing from the Health Score", () => {
+    const checks = [
+      c("a1", "lead-capture", "error"),
+      c("a2", "lead-capture", "passed"),
+      speedCheck("speed-mobile", "error", 38),
+      speedCheck("speed-desktop", "warning", 64, 4),
+      speedCheck("lcp", "error", undefined, 8),
+    ];
+    const lost = rankIssues(checks).reduce((s, x) => s + x.impact, 0);
+    expect(Math.abs(100 - lost - computeScores(checks).overall!)).toBeLessThanOrEqual(1);
   });
 });

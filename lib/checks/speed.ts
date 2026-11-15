@@ -48,7 +48,7 @@ function scoreCheck(m: PsiMetrics | null, id: "speed-mobile" | "speed-desktop", 
     notice: "",
     na: "",
   };
-  return result({ ...base, status, value, message: messages[status] });
+  return result({ ...base, status, value, metric: m.score, message: messages[status] });
 }
 
 export function buildSpeedChecks(speed: SpeedResult | null): CheckResult[] {

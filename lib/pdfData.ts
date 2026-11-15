@@ -33,8 +33,8 @@ export type PdfData = {
 };
 
 const MAX_ISSUES = 20;
-// The mobile speed check weighs more than desktop (see lib/checks/speed.ts WEIGHTS).
-export const SPEED_NOTE = "mobile weighted more";
+// How the Speed category score is made (see SPEED_MIX in lib/score.ts).
+export const SPEED_NOTE = "70% mobile, 30% desktop score";
 const BAND_LABEL = { poor: "Losing leads", fair: "Needs work", good: "In good shape" } as const;
 
 // The PDF uses the built-in Helvetica font, which can't draw some Unicode

@@ -45,6 +45,7 @@ export function sanitizeReportInput(body: unknown): ReportInput | null {
       title: typeof c.title === "string" ? c.title.slice(0, 80) : c.id,
       message: typeof c.message === "string" ? c.message.slice(0, 400) : "",
       weight: Math.min(Math.max(numOrNull(c.weight) ?? 1, 0), 20),
+      metric: numOrNull(c.metric) ?? undefined,
       value: typeof c.value === "string" ? c.value.slice(0, 120) : undefined,
     });
   }
@@ -110,7 +111,7 @@ Use ONLY the facts in the JSON you are given. Do not invent numbers, problems, c
 
 Write in plain, direct American English, like a contractor talking to another contractor. No emojis, no hype, no mention of AI.
 Never use these words: LCP, CLS, INP, Core Web Vitals, minify, caching, lazy loading, render-blocking, conversion, click-through, CTR, bounce rate, SEO, optimize, leverage, accessibility, metadata, H1, alt text, schema, computer.
-Say "desktop", never "computer" (e.g. "desktop speed score"). Avoid vague or odd phrases like "keeps visitors waiting for a call" or "improves user experience".
+Say "desktop", never "computer" (e.g. "desktop speed score"). Never use the word "waiting" (no "keeps homeowners waiting for a quote"). Avoid vague phrases like "improves user experience".
 Say it plainly instead: "how fast the page shows up on a phone", "the page jumps around while loading", "a clear main heading", "short descriptions on your photos", "business details code for Google", "more people click your listing on Google", "more calls".
 Examples inside the details (like "Lic #1234567") are placeholders, not the business's real data; never present them as real.
 Everything in "alreadyGood" is already working on the site. Never tell them to fix or add it. For example, if "Click-to-call phone link" is in alreadyGood, the phone IS tappable; a missing "telephone" in the business details code for Google is a different, smaller problem.
@@ -148,9 +149,9 @@ export function parseReport(content: string): AiReport {
   return { summary, fixes };
 }
 
-const BANNED = ["LCP", "CLS", "INP", "Core Web Vitals", "minify", "caching", "lazy loading", "lazy-loading", "render-blocking", "conversion", "click-through", "CTR", "bounce rate", "SEO", "optimize", "leverage", "accessibility", "metadata", "H1", "alt text", "schema", "computer", "user experience", "waiting for a call"];
-// Every fix must tie back to leads.
-const LEAD_WORDS = /\b(calls?|calling|call you|quotes?|quote requests?|estimates?|leads?|customers?|orders?|contact you|reach you|hire you|book)\b/i;
+const BANNED = ["LCP", "CLS", "INP", "Core Web Vitals", "minify", "caching", "lazy loading", "lazy-loading", "render-blocking", "conversion", "click-through", "CTR", "bounce rate", "SEO", "optimize", "leverage", "accessibility", "metadata", "H1", "alt text", "schema", "computer", "user experience", "waiting"];
+// Every fix must say it brings MORE leads: "more" + a lead word in the same sentence.
+export const MORE_LEADS = /\bmore\b[^.]{0,60}?\b(calls?|quote requests?|quotes?|estimate requests?|estimates?|leads?|customers?|orders?|jobs?|bookings?)\b/i;
 
 // Last-resort cleanup: swap common jargon for plain words. Runs on every report,
 // so even if the rewrite request fails (e.g. rate limit) the owner sees plain English.
@@ -173,9 +174,19 @@ export function plainEnglish(text: string): string {
   return PLAIN_WORDS.reduce((t, [re, plain]) => t.replace(re, plain as string), text);
 }
 
-const plainReport = (r: AiReport): AiReport => ({
+// Last-resort fix for a "why it matters" line: drop any sentence with "waiting",
+// and if no sentence says it brings MORE leads, add one.
+export function enforceLeadLine(detail: string, contractor = true): string {
+  const sentences = detail.match(/[^.!?]+[.!?]*/g) ?? [detail];
+  const kept = sentences.filter((s) => !/\bwait(ing|s)?\b/i.test(s)).join("").trim();
+  if (MORE_LEADS.test(kept)) return kept;
+  const add = contractor ? "That means more calls and quote requests." : "That means more orders and calls.";
+  return `${kept}${kept && !/[.!?]$/.test(kept) ? "." : ""} ${add}`.trim();
+}
+
+const plainReport = (r: AiReport, contractor = true): AiReport => ({
   summary: plainEnglish(r.summary),
-  fixes: r.fixes.map((f) => ({ title: plainEnglish(f.title), detail: plainEnglish(f.detail) })),
+  fixes: r.fixes.map((f) => ({ title: plainEnglish(f.title), detail: enforceLeadLine(plainEnglish(f.detail), contractor) })),
 });
 
 // Fixes that would contradict a check that already passed (seen in live testing:
@@ -207,8 +218,8 @@ export function reviewReport(report: AiReport, factsJson: string): string[] {
   const contractor = /"siteType":"contractor"/.test(factsJson);
   const opening = contractor ? "Your site is losing leads because" : "Your site could be getting more customers because";
   if (!report.summary.startsWith(opening)) problems.push(`The summary must start with "${opening}".`);
-  const noLeadLink = report.fixes.filter((f) => !LEAD_WORDS.test(f.detail)).map((f) => `"${f.title}"`);
-  if (noLeadLink.length) problems.push(`Each fix's detail must say how it gets more calls or quote requests. Missing in: ${noLeadLink.join(", ")}.`);
+  const noLeadLink = report.fixes.filter((f) => !MORE_LEADS.test(f.detail)).map((f) => `"${f.title}"`);
+  if (noLeadLink.length) problems.push(`Each fix's detail must say how it brings MORE calls or quote requests (e.g. "so more homeowners call you"). Missing in: ${noLeadLink.join(", ")}.`);
   const madeUp = [...new Set(text.match(/\d+(?:\.\d+)?/g) ?? [])].filter((n) => Number(n) > 10 && n !== "100" && !factsJson.includes(n)); // "out of 100" is always fine
   if (madeUp.length) problems.push(`These numbers are not in the facts, remove them: ${madeUp.join(", ")}.`);
   return problems;
@@ -259,12 +270,13 @@ export async function generateReport(
     // One rewrite if it used jargon or made up numbers. If the rewrite is still
     // not perfect we keep the better of the two (fewer problems).
     const problems = reviewReport(report, messages[1].content);
-    if (problems.length === 0) return plainReport(report);
+    const contractor = input.siteType === "contractor";
+    if (problems.length === 0) return plainReport(report, contractor);
     try {
       const retry = parseReport(await ask([...messages, { role: "assistant", content }, { role: "user", content: `Rewrite the JSON. ${problems.join(" ")}` }]));
-      return plainReport(reviewReport(retry, messages[1].content).length <= problems.length ? retry : report);
+      return plainReport(reviewReport(retry, messages[1].content).length <= problems.length ? retry : report, contractor);
     } catch {
-      return plainReport(report);
+      return plainReport(report, contractor);
     }
   } catch (err) {
     if (err instanceof ReportError) throw err;

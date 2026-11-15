@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMessages, buildReportFacts, generateReport, parseReport, plainEnglish, ReportError, reviewReport, sanitizeReportInput, type ReportInput } from "./aiReport";
+import { buildMessages, buildReportFacts, enforceLeadLine, generateReport, parseReport, plainEnglish, ReportError, reviewReport, sanitizeReportInput, type ReportInput } from "./aiReport";
 import type { CheckResult } from "./checks/types";
 
 const check = (id: string, status: CheckResult["status"], extra: Partial<CheckResult> = {}): CheckResult => ({
@@ -87,7 +87,7 @@ describe("reviewReport", () => {
     const problems = reviewReport(r("Your site is losing leads because the phone number isn't easy to call.", "Add a tap-to-call button."), f);
     expect(problems.join(" ")).toContain("already work on the site");
     // ...but it's fine to mention the phone when click-to-call is actually failing
-    expect(reviewReport(r("Your site is losing leads because the phone isn't tappable.", "Add tap-to-call."), facts)).toEqual([]);
+    expect(reviewReport(r("Your site is losing leads because the phone isn't tappable.", "Add tap-to-call so more homeowners call you."), facts)).toEqual([]);
   });
   it("checks the opening sentence matches the site type", () => {
     const shopFacts = JSON.stringify(buildReportFacts({ ...input, siteType: "ecommerce" }));
@@ -165,13 +165,47 @@ describe("wording rules from user feedback", () => {
   it("flags 'computer' and odd phrases like 'waiting for a call'", () => {
     const problems = reviewReport(r("Your computer score is low; this keeps visitors waiting for a call."), facts).join(" ");
     expect(problems).toContain("computer");
-    expect(problems).toContain("waiting for a call");
+    expect(problems).toContain("waiting");
   });
   it("requires every fix to say how it gets more calls or quote requests", () => {
-    expect(reviewReport(r("Smaller photos load faster."), facts).join(" ")).toContain("how it gets more calls");
+    expect(reviewReport(r("Smaller photos load faster."), facts).join(" ")).toContain("MORE calls");
     expect(reviewReport(r("Smaller photos load faster, so more people request a quote."), facts)).toEqual([]);
   });
   it("cleanup turns 'computer' into 'desktop'", () => {
     expect(plainEnglish("Your computer score is 67. It is slow on a computer.")).toBe("Your desktop score is 67. It is slow on desktop.");
   });
 });
+
+describe("'waiting' and MORE leads (user feedback round 2)", () => {
+  const facts = JSON.stringify(buildReportFacts(input));
+  const r = (detail: string) => ({ summary: "Your site is losing leads because it is slow.", fixes: [{ title: "Speed up the site", detail }] });
+
+  it("flags 'waiting' anywhere, e.g. 'keeps homeowners waiting for a quote'", () => {
+    expect(reviewReport(r("A faster page keeps homeowners waiting for a quote less."), facts).join(" ")).toContain("waiting");
+  });
+  it("requires the line to say it brings MORE calls or quotes, not just mention calls", () => {
+    expect(reviewReport(r("Homeowners can call you."), facts).join(" ")).toContain("MORE calls");
+    expect(reviewReport(r("Faster pages mean more homeowners call you."), facts)).toEqual([]);
+  });
+  it("last-resort cleanup drops the 'waiting' sentence and adds a MORE-leads line", () => {
+    expect(enforceLeadLine("Compress your photos. This keeps homeowners waiting for a quote less.")).toBe(
+      "Compress your photos. That means more calls and quote requests.",
+    );
+    expect(enforceLeadLine("Show your license so more homeowners call you.")).toBe("Show your license so more homeowners call you.");
+    expect(enforceLeadLine("Add a main heading", false)).toBe("Add a main heading. That means more orders and calls.");
+  });
+  it("generateReport output never contains 'waiting', even if the rewrite fails", async () => {
+    const bad = JSON.stringify({
+      summary: "Your site is losing leads because it is slow.",
+      fixes: [{ title: "Compress photos", detail: "Smaller photos load faster. This keeps homeowners waiting for a quote less." }],
+    });
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(() => (++calls === 1 ? groqReplyFn(bad) : Promise.resolve(new Response("", { status: 429 })))));
+    const out = await generateReport(input, "k");
+    expect(JSON.stringify(out)).not.toMatch(/waiting/i);
+    expect(out.fixes[0].detail).toContain("more calls and quote requests");
+    vi.unstubAllGlobals();
+  });
+});
+
+const groqReplyFn = (content: string) => Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }));
