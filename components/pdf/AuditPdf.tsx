@@ -152,7 +152,7 @@ export default function AuditPdf({ data }: { data: PdfData }) {
                   <Text style={{ fontFamily: "Helvetica-Bold" }}>{i.title}</Text>
                   <Text style={{ color: C.muted }}>  ·  {i.category}</Text>
                 </Text>
-                <Text style={s.small}>-{i.impact} pts</Text>
+                <Text style={s.small}>-{i.impact} {i.impact === 1 ? "pt" : "pts"}</Text>
               </View>
               <Text style={[s.para, { color: C.muted, marginTop: 1 }]}>{i.message}</Text>
             </View>

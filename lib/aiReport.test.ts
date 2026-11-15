@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildMessages, buildReportFacts, enforceLeadLine, generateReport, parseReport, plainEnglish, ReportError, reviewReport, sanitizeReportInput, type ReportInput } from "./aiReport";
+import { buildMessages, buildReportFacts, enforceLeadLine, generateReport, isWrongFact, parseReport, plainEnglish, ReportError, reviewReport, sanitizeReportInput, type ReportInput } from "./aiReport";
 import type { CheckResult } from "./checks/types";
 
 const check = (id: string, status: CheckResult["status"], extra: Partial<CheckResult> = {}): CheckResult => ({
@@ -209,3 +209,41 @@ describe("'waiting' and MORE leads (user feedback round 2)", () => {
 });
 
 const groqReplyFn = (content: string) => Promise.resolve(new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200 }));
+
+describe("wrong facts are never shown (live bug: 'Make phone number tap-to-call' on a site where it passed)", () => {
+  const okPhone: ReportInput = {
+    ...input,
+    checks: [...input.checks.filter((c) => c.id !== "click-to-call"), { id: "click-to-call", category: "lead-capture", status: "passed", title: "Click-to-call phone link", message: "ok", weight: 10 }],
+  };
+  const wrong = JSON.stringify({
+    summary: "Your site is losing leads because the phone number isn't tappable on mobile.",
+    fixes: [{ title: "Make phone number tap-to-call", detail: "Make it a link so more homeowners call you." }],
+  });
+
+  it("catches 'isn't tappable' as a contradiction", () => {
+    const facts = JSON.stringify(buildReportFacts(okPhone));
+    expect(reviewReport(JSON.parse(wrong), facts).some(isWrongFact)).toBe(true);
+  });
+  it("refuses the report if the rewrite fails and the first version has a wrong fact", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(() => (++calls === 1 ? groqReplyFn(wrong) : Promise.resolve(new Response("", { status: 429 })))));
+    await expect(generateReport(okPhone, "k")).rejects.toThrow(/accuracy check/);
+    vi.unstubAllGlobals();
+  });
+  it("refuses the report if the rewrite still has the wrong fact", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => groqReplyFn(wrong)));
+    await expect(generateReport(okPhone, "k")).rejects.toThrow(/accuracy check/);
+    vi.unstubAllGlobals();
+  });
+  it("uses the rewrite when it fixes the wrong fact", async () => {
+    const fixed = JSON.stringify({
+      summary: "Your site is losing leads because the business details code for Google is missing your phone.",
+      fixes: [{ title: "Add your phone to the business details code", detail: "Google can show it in search, so more homeowners call you." }],
+    });
+    let calls = 0;
+    vi.stubGlobal("fetch", vi.fn(() => groqReplyFn(++calls === 1 ? wrong : fixed)));
+    const out = await generateReport(okPhone, "k");
+    expect(out.fixes[0].title).toContain("business details code");
+    vi.unstubAllGlobals();
+  });
+});

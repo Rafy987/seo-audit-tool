@@ -192,13 +192,16 @@ const plainReport = (r: AiReport, contractor = true): AiReport => ({
 // Fixes that would contradict a check that already passed (seen in live testing:
 // "Add tap-to-call" on a site whose phone was already tappable).
 const ALREADY_DONE: { title: string; re: RegExp }[] = [
-  { title: "Click-to-call phone link", re: /tap[- ]to[- ]call|click[- ]to[- ]call|clickable phone|isn.t easy to call/i },
+  { title: "Click-to-call phone link", re: /tap[- ]to[- ]call|click[- ]to[- ]call|clickable phone|isn.t easy to call|(isn.t|not) (tappable|clickable)/i },
   { title: "License number", re: /(add|show|display)[^.]{0,30}license number/i },
   { title: "Reviews & testimonials", re: /(add|show)[^.]{0,20}(reviews|testimonials)/i },
   { title: "Project photos / gallery", re: /(add|create)[^.]{0,20}(gallery|photos of your (past|completed) work)/i },
   { title: "\"Get a quote\" button at the top", re: /(add|move)[^.]{0,30}(free estimate|get a quote|quote) button/i },
   { title: "Quote / contact form", re: /add[^.]{0,10}(quote|contact) form/i },
 ];
+
+// Problems that make the report factually wrong (vs. just badly worded).
+export const isWrongFact = (problem: string) => /already work on the site|not in the facts/.test(problem);
 
 // Problems in a written report: banned jargon, numbers that aren't in the facts,
 // wrong opening, or "fixes" for things that already pass. Pure function (tested).
@@ -272,12 +275,26 @@ export async function generateReport(
     const problems = reviewReport(report, messages[1].content);
     const contractor = input.siteType === "contractor";
     if (problems.length === 0) return plainReport(report, contractor);
+
+    // One rewrite. Wording problems (jargon, "waiting") can be cleaned up afterwards,
+    // but a WRONG FACT can't: if the best version still has one, we don't show the
+    // report at all (the rule-based Top reasons are shown instead).
+    let best = report;
+    let bestProblems = problems;
     try {
       const retry = parseReport(await ask([...messages, { role: "assistant", content }, { role: "user", content: `Rewrite the JSON. ${problems.join(" ")}` }]));
-      return plainReport(reviewReport(retry, messages[1].content).length <= problems.length ? retry : report, contractor);
+      const retryProblems = reviewReport(retry, messages[1].content);
+      if (retryProblems.length <= problems.length) {
+        best = retry;
+        bestProblems = retryProblems;
+      }
     } catch {
-      return plainReport(report, contractor);
+      // rewrite failed (e.g. rate limit): judge the first version
     }
+    if (bestProblems.some(isWrongFact)) {
+      throw new ReportError("the written summary didn't pass our accuracy check");
+    }
+    return plainReport(best, contractor);
   } catch (err) {
     if (err instanceof ReportError) throw err;
     if (controller.signal.aborted) throw new ReportError("The AI report took too long.");
